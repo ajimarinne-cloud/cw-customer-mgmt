@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<base target="_top">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>顧客管理システム</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif; }
+  .dup-row { background-color: #fee2e2 !important; }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800">
+
+<!-- ===== ローディング ===== -->
+<div id="overlay" class="hidden fixed inset-0 bg-white/60 z-50 flex items-center justify-center">
+  <div class="bg-white border rounded-lg px-4 py-3 shadow text-sm">処理中…</div>
+</div>
+
+<!-- ===== ログイン画面 ===== -->
+<div id="loginView" class="hidden min-h-screen flex items-center justify-center p-4">
+  <div class="w-full max-w-sm bg-white rounded-xl shadow p-6">
+    <h1 class="text-lg font-bold mb-1">顧客管理システム</h1>
+    <p class="text-xs text-slate-500 mb-5">Phase 1：ログイン / 新規登録 / 顧客一覧</p>
+
+    <label class="block text-sm font-medium mb-1">ユーザーID</label>
+    <input id="loginId" class="w-full border rounded px-3 py-2 mb-3 text-sm" autocomplete="off">
+
+    <label class="block text-sm font-medium mb-1">パスワード</label>
+    <input id="loginPw" type="password" class="w-full border rounded px-3 py-2 mb-3 text-sm" autocomplete="off"
+           onkeydown="if(event.key==='Enter') doLogin()">
+
+    <label class="flex items-center gap-2 text-sm mb-4">
+      <input id="loginRemember" type="checkbox" checked>
+      30日以内は次回からパスワード入力を省略する
+    </label>
+
+    <button onclick="doLogin()" class="w-full bg-blue-600 hover:bg-blue-700 text-white rounded py-2 text-sm font-medium">ログイン</button>
+    <p id="loginError" class="text-red-600 text-xs mt-3 hidden"></p>
+  </div>
+</div>
+
+<!-- ===== アプリ本体 ===== -->
+<div id="appView" class="hidden min-h-screen">
+  <header class="bg-white border-b sticky top-0 z-20">
+    <div class="max-w-7xl mx-auto px-4 flex items-center gap-1 h-14">
+      <span class="font-bold mr-4">顧客管理システム</span>
+      <button data-tab="new"  class="tab-btn px-3 py-2 text-sm rounded">新規登録</button>
+      <button data-tab="list" class="tab-btn px-3 py-2 text-sm rounded">顧客一覧</button>
+      <div class="ml-auto flex items-center gap-3 text-sm">
+        <span id="whoami" class="text-slate-600"></span>
+        <button onclick="doLogout()" class="text-slate-500 hover:text-red-600 text-xs border rounded px-2 py-1">ログアウト</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto p-4">
+
+    <!-- ---------- 新規登録（コピペで一気に入力） ---------- -->
+    <section id="newView" class="tab-view space-y-4">
+      <div class="bg-white rounded-lg p-4 shadow-sm">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <h3 class="font-bold text-sm">まとめ入力</h3>
+          <span class="text-xs text-slate-500">
+            担当者：<span id="batchOwner" class="font-medium text-slate-700"></span>（固定）　／　応募日：今日で固定　／　NO：自動採番
+          </span>
+        </div>
+        <div class="flex flex-wrap items-end gap-3 mb-2">
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">使用案件名</label>
+            <select id="batchProject" class="border rounded px-2 py-1.5 text-sm" onchange="onProjectChange()"></select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">使用アカウント</label>
+            <select id="batchAccount" class="border rounded px-2 py-1.5 text-sm" onchange="onAccountChange()"></select>
+          </div>
+          <p class="text-xs text-slate-500 mb-1.5">
+            下の欄に貼り付け（コピペ）して「登録する」を押すだけでOK。
+            複数人ぶんまとめて貼ってもOK（空行で区切り）。「＋」で次の人の項目を追加できます。
+          </p>
+        </div>
+        <textarea id="pasteBox" rows="6" class="w-full border rounded p-2 text-sm font-mono"></textarea>
+        <div class="flex flex-wrap gap-2 mt-2">
+          <button onclick="registerNow()" class="bg-blue-600 hover:bg-blue-700 text-white rounded px-5 py-2 text-sm font-medium">登録する</button>
+          <button onclick="appendTemplateBlock()" class="border rounded px-3 py-1.5 text-sm">＋ 次の人の項目を追加</button>
+          <button onclick="clearBatch()" class="border rounded px-3 py-1.5 text-sm">クリア</button>
+        </div>
+        <p id="parseMsg" class="text-xs mt-2 text-slate-600"></p>
+      </div>
+
+      <div id="batchWrap" class="bg-white rounded-lg shadow-sm hidden">
+        <div class="flex flex-wrap items-center justify-between gap-2 p-3 border-b">
+          <h3 class="font-bold text-sm">解析結果 <span id="batchCount" class="text-slate-400"></span></h3>
+          <button id="batchSubmitBtn" onclick="submitBatch()"
+            class="bg-blue-600 hover:bg-blue-700 text-white rounded px-5 py-2 text-sm font-medium disabled:opacity-40">登録する</button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-50 text-slate-500 text-xs">
+              <tr>
+                <th class="px-2 py-2 text-left">状態</th>
+                <th class="px-2 py-2 text-left">名前 <span class="text-red-500">*</span></th>
+                <th class="px-2 py-2 text-left">ID <span class="text-red-500">*</span></th>
+                <th class="px-2 py-2 text-left">年代</th>
+                <th class="px-2 py-2 text-left">地域</th>
+                <th class="px-2 py-2 text-left">案件名 <span class="text-red-500">*</span></th>
+                <th class="px-2 py-2 text-left">媒体 <span class="text-red-500">*</span></th>
+                <th class="px-2 py-2 text-left">アカウント <span class="text-red-500">*</span></th>
+                <th class="px-2 py-2 text-left">備考</th>
+                <th class="px-2 py-2"></th>
+              </tr>
+            </thead>
+            <tbody id="batchBody"></tbody>
+          </table>
+        </div>
+        <p id="batchMsg" class="text-sm p-3"></p>
+      </div>
+    </section>
+
+    <!-- ---------- 顧客一覧 ---------- -->
+    <section id="listView" class="tab-view hidden space-y-3">
+      <div class="bg-white rounded-lg p-4 shadow-sm flex flex-wrap gap-2 items-end">
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">フリーワード（名前・ID・アカウント名）</label>
+          <input id="fWord" class="border rounded px-2 py-1.5 text-sm w-56" oninput="onFilterChange()" placeholder="検索...">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">媒体</label>
+          <select id="fMedia" class="border rounded px-2 py-1.5 text-sm" onchange="loadCustomers(false)"><option value="">すべて</option></select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">案件名</label>
+          <select id="fProject" class="border rounded px-2 py-1.5 text-sm" onchange="loadCustomers(false)"><option value="">すべて</option></select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">担当者</label>
+          <select id="fOwner" class="border rounded px-2 py-1.5 text-sm" onchange="loadCustomers(false)"><option value="">すべて</option></select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">ステータス</label>
+          <select id="fStatus" class="border rounded px-2 py-1.5 text-sm" onchange="loadCustomers(false)"><option value="">すべて</option></select>
+        </div>
+        <label class="flex items-center gap-1.5 text-sm ml-1">
+          <input id="fDup" type="checkbox" onchange="loadCustomers(false)"> 重複ありのみ
+        </label>
+        <div class="ml-auto flex items-center gap-2 self-center">
+          <span id="listCount" class="text-xs text-slate-500"></span>
+          <button onclick="loadCustomers(true)" class="text-xs border rounded px-2 py-1 hover:bg-slate-50">再読込</button>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-lg shadow-sm overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 text-slate-500 text-xs">
+            <tr>
+              <th class="text-left px-3 py-2">NO</th>
+              <th class="text-left px-3 py-2">名前</th>
+              <th class="text-left px-3 py-2">ID</th>
+              <th class="text-left px-3 py-2">媒体</th>
+              <th class="text-left px-3 py-2">案件名</th>
+              <th class="text-left px-3 py-2">担当者</th>
+              <th class="text-left px-3 py-2">アカウント</th>
+              <th class="text-left px-3 py-2">ステータス</th>
+              <th class="text-left px-3 py-2">重複</th>
+            </tr>
+          </thead>
+          <tbody id="listBody"></tbody>
+        </table>
+      </div>
+      <p class="text-[11px] text-slate-400">顧客詳細（クリックで開く操作画面）は Phase 2 で追加します。</p>
+    </section>
+  </main>
+</div>
+
+<script>
+/* ============================================================
+ *  サーバー呼び出しを Promise でラップ
+ * ============================================================ */
+function call(fn) {
+  var args = Array.prototype.slice.call(arguments, 1);
+  return new Promise(function (resolve, reject) {
+    var runner = google.script.run
+      .withSuccessHandler(resolve)
+      .withFailureHandler(function (err) { reject(err); });
+    runner[fn].apply(runner, args);
+  });
+}
+function showOverlay(on) { document.getElementById('overlay').classList.toggle('hidden', !on); }
+
+/* ============================================================
+ *  状態
+ * ============================================================ */
+var state = {
+  token: null,
+  user: null,
+  options: { media: [], project: [], status: [] },
+  myAccounts: [],
+  owners: [],
+  customers: [],
+  listMeta: {},
+  batch: []            // 解析結果の行
+};
+
+var DEFAULT_PROJECT = '投稿作成＋SNS運用';
+var DEFAULT_MEDIA   = 'CW';
+var PASTE_TEMPLATE  = '名前：\nID：\n年代：\n地域：';
+var listDebounce = null, dupDebounce = null;
+function primaryAccount() { return (state.myAccounts && state.myAccounts[0]) || ''; }
+
+/* まとめ入力の「使用アカウント」選択（1人で複数アカウントを持つため） */
+function initAccountSelect() {
+  var el = document.getElementById('batchAccount');
+  el.innerHTML = '';
+  (state.myAccounts || []).forEach(function (v) {
+    el.insertAdjacentHTML('beforeend', '<option value="' + escAttr(v) + '">' + escHtml(v) + '</option>');
+  });
+  el.value = primaryAccount();
+}
+function currentAccount() {
+  var el = document.getElementById('batchAccount');
+  return (el && el.value) || primaryAccount();
+}
+/* 選択を変えたら、まだ登録していない行のアカウントを一括で差し替える */
+function onAccountChange() {
+  var acct = currentAccount();
+  state.batch.forEach(function (r) { if (!(r._result && r._result.ok)) r.運用アカウント = acct; });
+  renderBatch();
+}
+
+/* まとめ入力の「使用案件名」選択 */
+function initProjectSelect() {
+  var el = document.getElementById('batchProject');
+  el.innerHTML = '';
+  var opts = (state.options && state.options.project && state.options.project.length) ? state.options.project : [DEFAULT_PROJECT];
+  opts.forEach(function (v) {
+    el.insertAdjacentHTML('beforeend', '<option value="' + escAttr(v) + '">' + escHtml(v) + '</option>');
+  });
+  el.value = DEFAULT_PROJECT;
+}
+function currentProject() {
+  var el = document.getElementById('batchProject');
+  return (el && el.value) || DEFAULT_PROJECT;
+}
+/* 選択を変えたら、まだ登録していない行の案件名を一括で差し替える */
+function onProjectChange() {
+  var proj = currentProject();
+  state.batch.forEach(function (r) { if (!(r._result && r._result.ok)) r.案件名 = proj; });
+  renderBatch();
+}
+var TOKEN_KEY = 'cmp_token';
+function saveToken(t) { try { localStorage.setItem(TOKEN_KEY, t); } catch (e) {} }
+function loadToken()  { try { return localStorage.getItem(TOKEN_KEY); } catch (e) { return null; } }
+function clearToken() { try { localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
+
+/* ============================================================
+ *  ログイン
+ * ============================================================ */
+function doLogin() {
+  var id = document.getElementById('loginId').value.trim();
+  var pw = document.getElementById('loginPw').value;
+  var remember = document.getElementById('loginRemember').checked;
+  var err = document.getElementById('loginError');
+  err.classList.add('hidden');
+  showOverlay(true);
+  call('login', id, pw).then(function (r) {
+    if (!r.ok) { err.textContent = r.message || 'ログインに失敗しました。'; err.classList.remove('hidden'); showOverlay(false); return; }
+    if (remember) saveToken(r.token); else clearToken();
+    state.token = r.token;
+    return call('getBootstrap', r.token).then(afterBootstrap);
+  }).catch(function (e) {
+    err.textContent = errMsg(e); err.classList.remove('hidden'); showOverlay(false);
+  });
+}
+
+function tryAutoLogin() {
+  var t = loadToken();
+  if (!t) { showLogin(); return; }
+  state.token = t;
+  showOverlay(true);
+  call('getBootstrap', t).then(afterBootstrap).catch(function () {
+    clearToken(); state.token = null; showLogin();
+  });
+}
+
+function afterBootstrap(b) {
+  state.user = b.user;
+  state.options = b.options;
+  state.myAccounts = b.myAccounts;
+  state.owners = b.owners;
+  document.getElementById('loginView').classList.add('hidden');
+  document.getElementById('appView').classList.remove('hidden');
+  document.getElementById('whoami').textContent =
+    state.user.氏名 + '（' + state.user.チーム + ' / ' + state.user.役割 + ' / ' + state.user.権限 + '）';
+  document.getElementById('batchOwner').textContent = state.user.表示担当者名;
+  initProjectSelect();
+  initAccountSelect();
+  if (!document.getElementById('pasteBox').value.trim()) {
+    document.getElementById('pasteBox').value = PASTE_TEMPLATE;
+  }
+  initFilterSelects();
+  switchTab('new');
+  loadCustomers(false);
+  showOverlay(false);
+}
+
+function showLogin() {
+  document.getElementById('appView').classList.add('hidden');
+  document.getElementById('loginView').classList.remove('hidden');
+  showOverlay(false);
+}
+
+function doLogout() {
+  var t = state.token;
+  clearToken(); state.token = null; state.user = null;
+  showOverlay(true);
+  call('logout', t).then(function () { location.reload(); }).catch(function () { location.reload(); });
+}
+
+/* ============================================================
+ *  タブ切り替え
+ * ============================================================ */
+function switchTab(tab) {
+  var views = document.querySelectorAll('.tab-view');
+  for (var i = 0; i < views.length; i++) views[i].classList.add('hidden');
+  document.getElementById(tab + 'View').classList.remove('hidden');
+  var btns = document.querySelectorAll('.tab-btn');
+  for (var j = 0; j < btns.length; j++) {
+    var on = btns[j].dataset.tab === tab;
+    btns[j].classList.toggle('bg-blue-600', on);
+    btns[j].classList.toggle('text-white', on);
+  }
+  if (tab === 'list') renderList();
+}
+document.addEventListener('click', function (e) {
+  var b = e.target.closest ? e.target.closest('.tab-btn') : null;
+  if (b) switchTab(b.dataset.tab);
+});
+
+/* ============================================================
+ *  フィルタ用セレクト
+ * ============================================================ */
+function initFilterSelects() {
+  fillSelect('fMedia', state.options.media);
+  fillSelect('fProject', state.options.project);
+  fillSelect('fStatus', state.options.status);
+  fillSelect('fOwner', state.owners);
+}
+function fillSelect(id, arr) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  while (el.options.length > 1) el.remove(1);   // 先頭「すべて」を残す
+  arr.forEach(function (v) {
+    el.insertAdjacentHTML('beforeend', '<option value="' + escAttr(v) + '">' + escHtml(v) + '</option>');
+  });
+}
+function todayStr() {
+  var d = new Date();
+  return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+}
+
+/* ============================================================
+ *  まとめ入力：コピペで一気に解析
+ *   貼り付け欄に「名前：」などの項目名を最初から表示。
+ *   そこへ丸ごとコピペするだけで解析できる（クリックして1項目ずつ
+ *   埋める必要がない＝スプシに直接入力するより速い、が目的）。
+ * ============================================================ */
+function splitBlocks(text) {
+  var lines = String(text || '').replace(/\r/g, '').split('\n');
+  var blocks = [], cur = {};
+  var keyRe = /^\s*([^:：]{1,14})\s*[:：]\s*(.*)$/;
+  function flush() { if (Object.keys(cur).length) { blocks.push(cur); cur = {}; } }
+  lines.forEach(function (line) {
+    if (!line.trim()) { flush(); return; }
+    var m = line.match(keyRe);
+    if (!m) return;
+    var key = m[1].trim(), val = m[2].trim();
+    var kn = key.toLowerCase();
+    if ((key === 'NO' || kn === 'no') && Object.keys(cur).length) flush();
+    if (key === '名前' && cur['名前'] != null) flush();
+    cur[key] = val;
+  });
+  flush();
+  return blocks;
+}
+
+function newBatchRow(over) {
+  var r = {
+    名前: '', ID: '', 年齢: '', 地域: '', 応募金額: '',
+    案件名: currentProject(), 媒体: DEFAULT_MEDIA,
+    運用アカウント: currentAccount(),   // 「使用案件名」「使用アカウント」で選んだものを初期選択（プルダウンで変更可）
+    備考: '', _dupNos: [], _batchDup: false, _result: null
+  };
+  if (over) for (var k in over) if (over[k] !== undefined && over[k] !== '') r[k] = over[k];
+  return r;
+}
+
+function parseBatch() {
+  var text = document.getElementById('pasteBox').value;
+  var blocks = splitBlocks(text);
+  var carry = { 案件名: '', 媒体: '', acct: '' };
+  var rows = [];
+
+  blocks.forEach(function (b) {
+    if (b['案件名']) carry.案件名 = normalizeProject_(b['案件名']);
+    if (b['媒体']) carry.媒体 = b['媒体'].trim();
+    var acctRaw = b['アカウント名'] || b['アカウント'] || '';
+    if (acctRaw) carry.acct = acctRaw.split(/[\/／、,・]/)[0].trim();
+
+    var name = (b['名前'] || '').trim();
+    var id = (b['ID'] || b['Id'] || b['id'] || '').trim();
+    if (!name && !id) return;   // 項目名だけで値が無い行はスキップ
+
+    var age = (b['年代'] || b['年齢'] || '').trim();
+    if (age === '代' || age === '歳' || age === '才') age = '';
+
+    rows.push(newBatchRow({
+      名前: name,
+      ID: id,
+      年齢: age,
+      地域: (b['地域'] || '').trim(),
+      応募金額: String(b['応募金額'] || '').replace(/[^\d.]/g, ''),
+      案件名: carry.案件名 || currentProject(),
+      媒体: carry.媒体 || DEFAULT_MEDIA,
+      運用アカウント: carry.acct || currentAccount(),
+      備考: (b['備考'] || '').trim()
+    }));
+  });
+
+  state.batch = rows;
+  markBatchDups();
+  renderBatch();
+
+  document.getElementById('parseMsg').textContent = rows.length
+    ? rows.length + ' 件を解析しました。内容を確認して「登録する」を押してください。'
+    : '「名前：」「ID：」のあとに値を貼り付けてから「解析」を押してください。';
+  runDupCheck();
+}
+function normalizeProject_(v) {
+  var s = String(v || '').trim().replace(/\+/g, '＋').replace(/\s+/g, '');
+  var hit = (state.options.project || []).filter(function (p) { return p.replace(/\s+/g, '') === s; })[0];
+  return hit || String(v || '').trim();
+}
+
+function clearBatch() {
+  document.getElementById('pasteBox').value = PASTE_TEMPLATE;
+  document.getElementById('parseMsg').textContent = '';
+  document.getElementById('batchMsg').textContent = '';
+  state.batch = [];
+  renderBatch();
+}
+
+/* 貼り付け欄の末尾に、もう1人ぶんの項目名（名前：/ID：/年代：/地域：）を追加する */
+function appendTemplateBlock() {
+  var box = document.getElementById('pasteBox');
+  var sep = box.value.trim() ? '\n\n' : '';
+  box.value = box.value + sep + PASTE_TEMPLATE;
+  box.focus();
+  box.scrollTop = box.scrollHeight;
+}
+
+/* 貼り付け（Ctrl+V）したら少し待って自動解析（登録前のプレビュー表示用） */
+document.getElementById('pasteBox').addEventListener('paste', function () {
+  setTimeout(parseBatch, 60);
+});
+
+/* 「登録する」を1回押すだけで完了させる。
+ * まだ解析していなければ先に解析し、そのまま登録まで進む。
+ * すでに解析済み（自動解析済み／表を手直し済み）ならその内容のまま登録する。 */
+function registerNow() {
+  if (!state.batch.length) {
+    parseBatch();
+    if (!state.batch.length) return;   // 未入力ならparseMsgに案内が出ている
+  }
+  submitBatch();
+}
+
+function uniq(arr) {
+  var seen = {}, out = [];
+  (arr || []).forEach(function (x) { x = String(x || '').trim(); if (x && !seen[x]) { seen[x] = 1; out.push(x); } });
+  return out;
+}
+function selOpts(list, sel) {
+  return (list || []).map(function (v) {
+    return '<option value="' + escAttr(v) + '"' + (v === sel ? ' selected' : '') + '>' + escHtml(v) + '</option>';
+  }).join('');
+}
+function acctOptionsHtml(row) {
+  var list = uniq((state.myAccounts || []).concat(row.運用アカウント ? [row.運用アカウント] : []));
+  return '<option value="">（選択）</option>' + selOpts(list, row.運用アカウント);
+}
+
+function rowStatus(row) {
+  if (row._result && row._result.ok) return { label: '登録済 NO:' + row._result.no, cls: 'bg-green-100 text-green-700', ok: false };
+  if (row._result && !row._result.ok) return { label: '失敗', cls: 'bg-red-100 text-red-700', ok: true };
+  var miss = !String(row.名前).trim() || !String(row.ID).trim() || !row.案件名 || !row.媒体 || !row.運用アカウント;
+  if (miss) return { label: '未入力', cls: 'bg-amber-100 text-amber-700', ok: false };
+  if ((row._dupNos && row._dupNos.length) || row._batchDup) return { label: '重複（登録されます）', cls: 'bg-red-100 text-red-700', ok: true };
+  return { label: 'OK', cls: 'bg-emerald-100 text-emerald-700', ok: true };
+}
+
+function markBatchDups() {
+  var counts = {};
+  state.batch.forEach(function (r) {
+    var id = String(r.ID || '').trim();
+    if (id) counts[id] = (counts[id] || 0) + 1;
+  });
+  state.batch.forEach(function (r) {
+    var id = String(r.ID || '').trim();
+    r._batchDup = !!(id && counts[id] > 1);
+  });
+}
+
+function renderBatch() {
+  var b = state.batch;
+  document.getElementById('batchWrap').classList.toggle('hidden', b.length === 0);
+  document.getElementById('batchCount').textContent = '（' + b.length + '件）';
+
+  document.getElementById('batchBody').innerHTML = b.map(function (row, i) {
+    var st = rowStatus(row);
+    var note = '';
+    if (row._result) note = '<div class="text-[11px] mt-0.5 ' + (row._result.ok ? 'text-green-600' : 'text-red-600') + '">' + escHtml(row._result.text) + '</div>';
+    else if (row._dupNos && row._dupNos.length)
+      note = '<div class="text-[11px] mt-0.5 text-red-600">既存NO:' + escHtml(row._dupNos.join(',')) + '</div>';
+    else if (row._batchDup)
+      note = '<div class="text-[11px] mt-0.5 text-red-600">この中で重複</div>';
+
+    return '<tr class="border-t align-top" data-idx="' + i + '">'
+      + '<td class="px-2 py-1.5 whitespace-nowrap"><span class="text-xs px-1.5 py-0.5 rounded ' + st.cls + '">' + st.label + '</span>' + note + '</td>'
+      + '<td class="px-1 py-1.5"><input data-f="名前" class="border rounded px-1.5 py-1 text-sm w-24" value="' + escAttr(row.名前) + '"></td>'
+      + '<td class="px-1 py-1.5"><input data-f="ID" class="border rounded px-1.5 py-1 text-sm w-32" value="' + escAttr(row.ID) + '"></td>'
+      + '<td class="px-1 py-1.5"><input data-f="年齢" class="border rounded px-1.5 py-1 text-sm w-14" value="' + escAttr(row.年齢) + '"></td>'
+      + '<td class="px-1 py-1.5"><input data-f="地域" class="border rounded px-1.5 py-1 text-sm w-16" value="' + escAttr(row.地域) + '"></td>'
+      + '<td class="px-1 py-1.5"><select data-f="案件名" class="border rounded px-1 py-1 text-sm"><option value="">（選択）</option>' + selOpts(state.options.project, row.案件名) + '</select></td>'
+      + '<td class="px-1 py-1.5"><select data-f="媒体" class="border rounded px-1 py-1 text-sm"><option value="">（選択）</option>' + selOpts(state.options.media, row.媒体) + '</select></td>'
+      + '<td class="px-1 py-1.5"><select data-f="運用アカウント" class="border rounded px-1 py-1 text-sm">' + acctOptionsHtml(row) + '</select></td>'
+      + '<td class="px-1 py-1.5"><input data-f="備考" class="border rounded px-1.5 py-1 text-sm w-24" value="' + escAttr(row.備考 || '') + '"></td>'
+      + '<td class="px-2 py-1.5 whitespace-nowrap"><button data-del="' + i + '" class="text-slate-400 hover:text-red-600 text-xs">削除</button></td>'
+      + '</tr>';
+  }).join('');
+
+  refreshBatchSummary();
+}
+
+function refreshBatchSummary() {
+  var n = state.batch.filter(function (r) { return rowStatus(r).ok && !(r._result && r._result.ok); }).length;
+  var btn = document.getElementById('batchSubmitBtn');
+  btn.textContent = n > 0 ? n + '件を登録する' : '登録する';
+  btn.disabled = n === 0;
+}
+
+/* 入力中：ステータスバッジだけ更新（フォーカスを保つ） */
+function refreshStatusBadges() {
+  var trs = document.querySelectorAll('#batchBody tr');
+  for (var i = 0; i < trs.length; i++) {
+    var idx = Number(trs[i].getAttribute('data-idx'));
+    var row = state.batch[idx];
+    if (!row) continue;
+    var st = rowStatus(row);
+    var cell = trs[i].querySelector('td:first-child');
+    var span = cell ? cell.querySelector('span') : null;
+    if (span) { span.textContent = st.label; span.className = 'text-xs px-1.5 py-0.5 rounded ' + st.cls; }
+  }
+  refreshBatchSummary();
+}
+
+/* テーブル編集イベント（委譲） */
+document.getElementById('batchBody').addEventListener('input', onBatchEdit);
+document.getElementById('batchBody').addEventListener('change', onBatchEdit);
+document.getElementById('batchBody').addEventListener('click', function (e) {
+  var d = e.target.getAttribute && e.target.getAttribute('data-del');
+  if (d != null) { state.batch.splice(Number(d), 1); markBatchDups(); renderBatch(); }
+});
+function onBatchEdit(e) {
+  var el = e.target;
+  var f = el.getAttribute && el.getAttribute('data-f');
+  if (!f) return;
+  var tr = el.closest('tr');
+  var idx = Number(tr.getAttribute('data-idx'));
+  if (!state.batch[idx]) return;
+  state.batch[idx][f] = el.value;
+  if (f === 'ID') { markBatchDups(); scheduleDupCheck(); }
+  refreshStatusBadges();
+}
+
+/* ============================================================
+ *  重複チェック（入力中のIDをまとめて照合）
+ * ============================================================ */
+function scheduleDupCheck() {
+  clearTimeout(dupDebounce);
+  dupDebounce = setTimeout(runDupCheck, 500);
+}
+function runDupCheck() {
+  if (!state.token || !state.batch.length) return;
+  var ids = uniq(state.batch.map(function (r) { return r.ID; }));
+  if (!ids.length) {
+    state.batch.forEach(function (r) { r._dupNos = []; });
+    renderBatch();
+    return;
+  }
+  call('checkDuplicates', state.token, ids).then(function (map) {
+    state.batch.forEach(function (r) { r._dupNos = map[String(r.ID || '').trim()] || []; });
+    markBatchDups();
+    renderBatch();
+  }).catch(function () {});
+}
+
+/* ============================================================
+ *  まとめ登録
+ *   重複していても登録する（応募数として数え、重複件数も見えるようにするため）
+ * ============================================================ */
+function submitBatch() {
+  markBatchDups();
+  var toSend = [], mapBack = [];
+  state.batch.forEach(function (r, i) {
+    if (r._result && r._result.ok) return;         // 登録済みは送らない
+    if (!rowStatus(r).ok) return;                  // 未入力は送らない（重複はOK扱いで送る）
+    toSend.push({
+      名前: r.名前, ID: r.ID, 年齢: r.年齢, 地域: r.地域, 応募金額: r.応募金額,
+      案件名: r.案件名, 媒体: r.媒体, 運用アカウント: r.運用アカウント,
+      LINE追加: false, 備考: r.備考 || ''
+    });
+    mapBack.push(i);
+  });
+
+  var msg = document.getElementById('batchMsg');
+  if (!toSend.length) {
+    msg.className = 'text-sm p-3 text-amber-700';
+    msg.textContent = '登録できる行がありません（「未入力」の項目を埋めてください）。';
+    return;
+  }
+
+  showOverlay(true);
+  call('registerBatch', state.token, toSend).then(function (res) {
+    (res.results || []).forEach(function (rr) {
+      var bi = mapBack[rr.index];
+      if (rr.ok) {
+        state.batch[bi]._result = {
+          ok: true, no: rr.no,
+          text: rr.dup ? '登録しました（ID重複／既存NO:' + rr.dupNos.join(',') + '）' : '登録しました'
+        };
+      } else {
+        state.batch[bi]._result = { ok: false, text: rr.message || 'エラー' };
+      }
+    });
+    var okc = (res.results || []).filter(function (x) { return x.ok; }).length;
+    var ngc = (res.results || []).filter(function (x) { return !x.ok; }).length;
+    msg.className = 'text-sm p-3 ' + (ngc ? 'text-amber-700' : 'text-green-700');
+    msg.textContent = okc + ' 件を登録しました。' + (ngc ? ngc + ' 件は失敗（各行の表示を確認）。' : '');
+    renderBatch();
+    loadCustomers(true);
+  }).catch(function (e) {
+    msg.className = 'text-sm p-3 text-red-600';
+    msg.textContent = 'エラー：' + errMsg(e);
+  }).then(function () { showOverlay(false); });
+}
+
+/* ============================================================
+ *  顧客一覧
+ *   顧客リストは数千行あるため、サーバー側で「最新N件」か「条件検索」を実行。
+ * ============================================================ */
+function onFilterChange() {
+  clearTimeout(listDebounce);
+  listDebounce = setTimeout(function () { loadCustomers(false); }, 400);
+}
+function currentQuery() {
+  return {
+    word: document.getElementById('fWord').value.trim(),
+    media: document.getElementById('fMedia').value,
+    project: document.getElementById('fProject').value,
+    owner: document.getElementById('fOwner').value,
+    status: document.getElementById('fStatus').value,
+    dupOnly: document.getElementById('fDup').checked
+  };
+}
+function hasActiveFilter(q) {
+  return !!(q.word || q.media || q.project || q.owner || q.status || q.dupOnly);
+}
+
+function loadCustomers(showLoad) {
+  if (!state.token) return;
+  var q = currentQuery();
+  var opts = hasActiveFilter(q)
+    ? { mode: 'search', query: q, limit: 500 }
+    : { mode: 'recent', limit: 300 };
+  if (showLoad) showOverlay(true);
+  document.getElementById('listCount').textContent = '読み込み中…';
+  document.getElementById('listBody').innerHTML =
+    '<tr><td colspan="9" class="px-3 py-6 text-center text-slate-400 text-sm">読み込み中…</td></tr>';
+  return call('getCustomers', state.token, opts).then(function (res) {
+    state.customers = res.rows || [];
+    state.listMeta = res || {};
+    renderList();
+  }).catch(function (e) {
+    document.getElementById('listCount').textContent = '';
+    document.getElementById('listBody').innerHTML =
+      '<tr><td colspan="9" class="px-3 py-4 text-red-600 text-sm">読み込みエラー：' + escHtml(errMsg(e)) + '</td></tr>';
+  }).then(function () { if (showLoad) showOverlay(false); });
+}
+
+function renderList() {
+  var rows = state.customers || [];
+  var m = state.listMeta || {};
+  var label;
+  if (m.mode === 'search') {
+    label = '検索結果 ' + (m.total || 0) + ' 件'
+      + (m.truncated ? '（先頭 ' + rows.length + ' 件を表示）' : '')
+      + '　全 ' + (m.scanned || 0) + ' 行を検索（全チーム）';
+  } else {
+    label = '最新 ' + rows.length + ' 件を表示　全 ' + (m.scanned || 0) + ' 行（古い顧客は検索欄で絞り込み）';
+  }
+  document.getElementById('listCount').textContent = label;
+
+  document.getElementById('listBody').innerHTML = rows.map(function (c) {
+    var isDup = String(c.重複 || '').indexOf('重複') >= 0;
+    return '<tr class="border-t hover:bg-slate-50 ' + (isDup ? 'dup-row' : '') + '">'
+      + td(c.no) + td(c.名前) + td(c.ID) + td(c.媒体) + td(c.案件名) + td(c.担当者) + td(c.運用アカウント)
+      + '<td class="px-3 py-2">' + (c.ステータス ? '<span class="inline-block px-2 py-0.5 rounded-full bg-slate-100 text-xs">' + escHtml(c.ステータス) + '</span>' : '') + '</td>'
+      + '<td class="px-3 py-2 text-red-600 text-xs">' + (isDup ? '重複あり' + (c.重複元NO ? '（元:' + escHtml(c.重複元NO) + '）' : '') : '') + '</td>'
+      + '</tr>';
+  }).join('') || '<tr><td colspan="9" class="px-3 py-4 text-slate-400 text-sm">該当する顧客がありません。</td></tr>';
+}
+function td(v) { return '<td class="px-3 py-2">' + escHtml(v == null ? '' : String(v)) + '</td>'; }
+
+/* ============================================================
+ *  ユーティリティ
+ * ============================================================ */
+function escHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+function escAttr(s) { return escHtml(s); }
+function errMsg(e) {
+  if (!e) return '不明なエラー';
+  if (typeof e === 'string') return e;
+  return e.message || String(e);
+}
+
+/* ============================================================
+ *  起動
+ * ============================================================ */
+tryAutoLogin();
+</script>
+</body>
+</html>
