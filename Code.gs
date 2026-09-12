@@ -409,21 +409,25 @@ function getBootstrap(token) {
 
 
 /* ============================================================
- *  顧客一覧（全チーム表示）
+ *  顧客一覧（全チーム表示）／未対応リスト（自分の担当のみ）
  *
  *  顧客リストは過去データが複数の場所に分かれて入っている（行の位置が
- *  新しい／古いを意味しない）ため、「新しい順」は行の位置ではなく
- *  NO列（登録のたびに必ず増える番号）の降順で判定する。
- *   - mode='recent'（既定）：NOが大きい順に limit 件だけ返す
- *   - mode='search'         ：全行を走査し、条件に合うものをNOが大きい順で最大 limit 件返す
+ *  新しい／古いを意味しない）ため、並び順は行の位置ではなく応募日・NO列で判定する。
+ *   - mode='recent'（既定）：NOが大きい順（新しい順）に limit 件だけ返す
+ *   - mode='search'         ：全行を走査し、条件（月・媒体・案件名・担当者・
+ *                             ステータス・重複ありのみ等）に合うものを、
+ *                             応募日が古い順（同日はNO昇順）で最大 limit 件返す
+ *   - mode='mine'           ：ログインユーザーが担当した顧客のうち、重複と
+ *                             完了ステータス（面談済み／辞退・ブロック）を
+ *                             除いたものを、応募日が古い順で返す（未対応リスト用）
  *
  *  戻り値： { rows:[...], total, scanned, truncated, mode }
  * ============================================================ */
 function getCustomers(token, opts) {
-  requireUser_(token);
+  const user = requireUser_(token);
   opts = opts || {};
   const limit = Math.min(Math.max(Number(opts.limit) || 500, 1), 2000);
-  const mode = (opts.mode === 'search') ? 'search' : 'recent';
+  const mode = (opts.mode === 'search') ? 'search' : (opts.mode === 'mine') ? 'mine' : 'recent';
   const q = opts.query || {};
 
   const sh = ss_().getSheetByName(CUSTOMER_SHEET);
@@ -440,6 +444,7 @@ function getCustomers(token, opts) {
     const id = String(r[COL.ID - 1] || '').trim();
     if (!name && !id) return;   // 空行はスキップ
     const o = mapCustomerRow_(r, tz);
+
     if (mode === 'search') {
       if (word) {
         const hay = ((o.名前 || '') + ' ' + (o.ID || '') + ' ' + (o.運用アカウント || '')).toLowerCase();
@@ -450,11 +455,31 @@ function getCustomers(token, opts) {
       if (q.owner && o.担当者 !== q.owner) return;
       if (q.status && o.ステータス !== q.status) return;
       if (q.dupOnly && String(o.重複 || '').indexOf('重複') < 0) return;
+      if (q.month && String(o.応募日 || '').indexOf(q.month) !== 0) return;
+    } else if (mode === 'mine') {
+      // 「未対応リスト」：自分が担当した顧客のうち、重複と完了ステータス（面談済み／辞退・ブロック）を除いたもの
+      if (String(o.担当者 || '').trim() !== String(user.表示担当者名 || '').trim()) return;
+      if (String(o.重複 || '').indexOf('重複') >= 0) return;
+      if (o.ステータス === '面談済み' || o.ステータス === '辞退/ﾌﾞﾛｯｸ') return;
+      if (word) {
+        const hay = ((o.名前 || '') + ' ' + (o.ID || '')).toLowerCase();
+        if (hay.indexOf(word) < 0) return;
+      }
     }
     matched.push(o);
   });
 
-  matched.sort(function (a, b) { return (Number(b.no) || 0) - (Number(a.no) || 0); });   // NOが大きい＝新しい順
+  if (mode === 'recent') {
+    matched.sort(function (a, b) { return (Number(b.no) || 0) - (Number(a.no) || 0); });   // NOが大きい＝新しい順
+  } else {
+    // 検索結果／未対応リストは、応募日が古い順（同日はNOが小さい順）
+    matched.sort(function (a, b) {
+      const da = a.応募日 || '', db = b.応募日 || '';
+      if (da !== db) return da < db ? -1 : 1;
+      return (Number(a.no) || 0) - (Number(b.no) || 0);
+    });
+  }
+
   return {
     rows: matched.slice(0, limit),
     total: matched.length,
@@ -462,6 +487,62 @@ function getCustomers(token, opts) {
     truncated: matched.length > limit,
     mode: mode
   };
+}
+
+/* ============================================================
+ *  顧客一覧の「対象月」プルダウン用：応募日(K列)に存在する年月の一覧を返す
+ * ============================================================ */
+function getMonthOptions(token) {
+  requireUser_(token);
+  const sh = ss_().getSheetByName(CUSTOMER_SHEET);
+  const last = sh.getLastRow();
+  if (last < CUSTOMER_START_ROW) return [];
+  const tz = Session.getScriptTimeZone();
+  const vals = sh.getRange(CUSTOMER_START_ROW, COL.応募日, last - CUSTOMER_START_ROW + 1, 1).getValues();
+  const set = {};
+  vals.forEach(function (r) {
+    const v = r[0];
+    if (!v) return;
+    const ym = (v instanceof Date) ? Utilities.formatDate(v, tz, 'yyyy-MM') : String(v).slice(0, 7);
+    if (/^\d{4}-\d{2}$/.test(ym)) set[ym] = true;
+  });
+  return Object.keys(set).sort();   // 昇順（古い月→新しい月）
+}
+
+/* ============================================================
+ *  ステータス更新（「未対応リスト」から入力）
+ *   自分が担当した顧客だけステータスを更新できる（他人の顧客は不可）
+ * ============================================================ */
+function updateCustomerStatus(token, no, status) {
+  const user = requireUser_(token);
+  const st = String(status || '').trim();
+  if (OPT_STATUS.indexOf(st) < 0) throw new Error('ステータスが選択肢と一致しません：「' + st + '」');
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    throw new Error('現在ほかの処理が実行中です。数秒待ってからもう一度お試しください。');
+  }
+  try {
+    const sh = ss_().getSheetByName(CUSTOMER_SHEET);
+    const last = sh.getLastRow();
+    if (last < CUSTOMER_START_ROW) throw new Error('対象の顧客が見つかりません。');
+    const nos = sh.getRange(CUSTOMER_START_ROW, COL.NO, last - CUSTOMER_START_ROW + 1, 1).getValues();
+    let targetRow = -1;
+    for (let i = 0; i < nos.length; i++) {
+      if (Number(nos[i][0]) === Number(no)) { targetRow = CUSTOMER_START_ROW + i; break; }
+    }
+    if (targetRow < 0) throw new Error('NO:' + no + ' の顧客が見つかりません。');
+
+    const owner = sh.getRange(targetRow, COL.担当者).getValue();
+    if (String(owner || '').trim() !== String(user.表示担当者名 || '').trim()) {
+      throw new Error('自分が担当した顧客のみステータスを更新できます。');
+    }
+    sh.getRange(targetRow, COL.ステータス).setValue(st);
+    SpreadsheetApp.flush();
+    return { ok: true };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function mapCustomerRow_(r, tz) {

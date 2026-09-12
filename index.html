@@ -48,6 +48,8 @@
       <span class="font-bold mr-4">顧客管理システム</span>
       <button data-tab="new"  class="tab-btn px-3 py-2 text-sm rounded">新規登録</button>
       <button data-tab="list" class="tab-btn px-3 py-2 text-sm rounded">顧客一覧</button>
+      <button data-tab="mine" class="tab-btn px-3 py-2 text-sm rounded">未対応リスト</button>
+      <button data-tab="dup"  class="tab-btn px-3 py-2 text-sm rounded">重複リスト</button>
       <div class="ml-auto flex items-center gap-3 text-sm">
         <span id="whoami" class="text-slate-600"></span>
         <button onclick="doLogout()" class="text-slate-500 hover:text-red-600 text-xs border rounded px-2 py-1">ログアウト</button>
@@ -141,6 +143,10 @@
           <label class="block text-xs font-medium text-slate-500 mb-1">ステータス</label>
           <select id="fStatus" class="border rounded px-2 py-1.5 text-sm" onchange="loadCustomers(false)"><option value="">すべて</option></select>
         </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">対象月</label>
+          <select id="fMonth" class="border rounded px-2 py-1.5 text-sm" onchange="loadCustomers(false)"><option value="">すべて</option></select>
+        </div>
         <label class="flex items-center gap-1.5 text-sm ml-1">
           <input id="fDup" type="checkbox" onchange="loadCustomers(false)"> 重複ありのみ
         </label>
@@ -155,6 +161,7 @@
           <thead class="bg-slate-50 text-slate-500 text-xs">
             <tr>
               <th class="text-left px-3 py-2">NO</th>
+              <th class="text-left px-3 py-2">応募日</th>
               <th class="text-left px-3 py-2">名前</th>
               <th class="text-left px-3 py-2">ID</th>
               <th class="text-left px-3 py-2">媒体</th>
@@ -169,6 +176,74 @@
         </table>
       </div>
       <p class="text-[11px] text-slate-400">顧客詳細（クリックで開く操作画面）は Phase 2 で追加します。</p>
+    </section>
+
+    <!-- ---------- 未対応リスト（自分が担当した顧客のうち、対応待ちのみ） ---------- -->
+    <section id="mineView" class="tab-view hidden space-y-3">
+      <div class="bg-white rounded-lg p-4 shadow-sm flex flex-wrap gap-2 items-end">
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">フリーワード（名前・ID）</label>
+          <input id="mWord" class="border rounded px-2 py-1.5 text-sm w-56" oninput="onMineFilterChange()" placeholder="検索...">
+        </div>
+        <div class="ml-auto flex items-center gap-2 self-center">
+          <span id="mineCount" class="text-xs text-slate-500"></span>
+          <button onclick="loadMine(true)" class="text-xs border rounded px-2 py-1 hover:bg-slate-50">再読込</button>
+        </div>
+      </div>
+      <p class="text-xs text-slate-500">
+        自分が担当した顧客のうち、まだ対応が終わっていない方だけを表示します（重複あり／ステータスが「面談済み」「辞退/ﾌﾞﾛｯｸ」の方は表示されません）。
+        ステータスを選んで「保存」を押すと、そのままスプレッドシートに反映されます。
+      </p>
+      <div class="bg-white rounded-lg shadow-sm overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 text-slate-500 text-xs">
+            <tr>
+              <th class="text-left px-3 py-2">NO</th>
+              <th class="text-left px-3 py-2">応募日</th>
+              <th class="text-left px-3 py-2">名前</th>
+              <th class="text-left px-3 py-2">ID</th>
+              <th class="text-left px-3 py-2">媒体</th>
+              <th class="text-left px-3 py-2">案件名</th>
+              <th class="text-left px-3 py-2">アカウント</th>
+              <th class="text-left px-2 py-2">ステータス</th>
+              <th class="px-2 py-2"></th>
+            </tr>
+          </thead>
+          <tbody id="mineBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ---------- 重複リスト ---------- -->
+    <section id="dupView" class="tab-view hidden space-y-3">
+      <div class="bg-white rounded-lg p-4 shadow-sm flex flex-wrap gap-2 items-end">
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">フリーワード（名前・ID・アカウント名）</label>
+          <input id="dWord" class="border rounded px-2 py-1.5 text-sm w-56" oninput="onDupFilterChange()" placeholder="検索...">
+        </div>
+        <div class="ml-auto flex items-center gap-2 self-center">
+          <span id="dupCount" class="text-xs text-slate-500"></span>
+          <button onclick="loadDup(true)" class="text-xs border rounded px-2 py-1 hover:bg-slate-50">再読込</button>
+        </div>
+      </div>
+      <div class="bg-white rounded-lg shadow-sm overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 text-slate-500 text-xs">
+            <tr>
+              <th class="text-left px-3 py-2">NO</th>
+              <th class="text-left px-3 py-2">応募日</th>
+              <th class="text-left px-3 py-2">名前</th>
+              <th class="text-left px-3 py-2">ID</th>
+              <th class="text-left px-3 py-2">媒体</th>
+              <th class="text-left px-3 py-2">案件名</th>
+              <th class="text-left px-3 py-2">担当者</th>
+              <th class="text-left px-3 py-2">アカウント</th>
+              <th class="text-left px-3 py-2">重複元NO</th>
+            </tr>
+          </thead>
+          <tbody id="dupBody"></tbody>
+        </table>
+      </div>
     </section>
   </main>
 </div>
@@ -199,6 +274,11 @@ var state = {
   owners: [],
   customers: [],
   listMeta: {},
+  monthOptions: [],
+  mine: [],
+  mineMeta: {},
+  dup: [],
+  dupMeta: {},
   batch: []            // 解析結果の行
 };
 
@@ -300,7 +380,12 @@ function afterBootstrap(b) {
   }
   initFilterSelects();
   switchTab('new');
-  loadCustomers(false);
+  call('getMonthOptions', state.token).then(function (months) {
+    state.monthOptions = months || [];
+    fillMonthSelect();
+  }).catch(function () {}).then(function () {
+    loadCustomers(false);
+  });
   showOverlay(false);
 }
 
@@ -331,6 +416,8 @@ function switchTab(tab) {
     btns[j].classList.toggle('text-white', on);
   }
   if (tab === 'list') renderList();
+  if (tab === 'mine') loadMine(false);
+  if (tab === 'dup') loadDup(false);
 }
 document.addEventListener('click', function (e) {
   var b = e.target.closest ? e.target.closest('.tab-btn') : null;
@@ -353,6 +440,18 @@ function fillSelect(id, arr) {
   arr.forEach(function (v) {
     el.insertAdjacentHTML('beforeend', '<option value="' + escAttr(v) + '">' + escHtml(v) + '</option>');
   });
+}
+/* 「対象月」プルダウン：新しい月を上に表示。今月があれば既定で選択（顧客一覧を古い順・月別で見やすくする） */
+function fillMonthSelect() {
+  var el = document.getElementById('fMonth');
+  if (!el) return;
+  while (el.options.length > 1) el.remove(1);
+  var months = (state.monthOptions || []).slice().reverse();
+  months.forEach(function (ym) {
+    el.insertAdjacentHTML('beforeend', '<option value="' + ym + '">' + ym + '</option>');
+  });
+  var cur = todayStr().slice(0, 7);
+  if (state.monthOptions.indexOf(cur) >= 0) el.value = cur;
 }
 function todayStr() {
   var d = new Date();
@@ -670,11 +769,12 @@ function currentQuery() {
     project: document.getElementById('fProject').value,
     owner: document.getElementById('fOwner').value,
     status: document.getElementById('fStatus').value,
-    dupOnly: document.getElementById('fDup').checked
+    dupOnly: document.getElementById('fDup').checked,
+    month: document.getElementById('fMonth').value
   };
 }
 function hasActiveFilter(q) {
-  return !!(q.word || q.media || q.project || q.owner || q.status || q.dupOnly);
+  return !!(q.word || q.media || q.project || q.owner || q.status || q.dupOnly || q.month);
 }
 
 function loadCustomers(showLoad) {
@@ -686,7 +786,7 @@ function loadCustomers(showLoad) {
   if (showLoad) showOverlay(true);
   document.getElementById('listCount').textContent = '読み込み中…';
   document.getElementById('listBody').innerHTML =
-    '<tr><td colspan="9" class="px-3 py-6 text-center text-slate-400 text-sm">読み込み中…</td></tr>';
+    '<tr><td colspan="10" class="px-3 py-6 text-center text-slate-400 text-sm">読み込み中…</td></tr>';
   return call('getCustomers', state.token, opts).then(function (res) {
     state.customers = res.rows || [];
     state.listMeta = res || {};
@@ -694,7 +794,7 @@ function loadCustomers(showLoad) {
   }).catch(function (e) {
     document.getElementById('listCount').textContent = '';
     document.getElementById('listBody').innerHTML =
-      '<tr><td colspan="9" class="px-3 py-4 text-red-600 text-sm">読み込みエラー：' + escHtml(errMsg(e)) + '</td></tr>';
+      '<tr><td colspan="10" class="px-3 py-4 text-red-600 text-sm">読み込みエラー：' + escHtml(errMsg(e)) + '</td></tr>';
   }).then(function () { if (showLoad) showOverlay(false); });
 }
 
@@ -703,24 +803,113 @@ function renderList() {
   var m = state.listMeta || {};
   var label;
   if (m.mode === 'search') {
-    label = '検索結果 ' + (m.total || 0) + ' 件'
+    label = '検索結果 ' + (m.total || 0) + ' 件（古い順）'
       + (m.truncated ? '（先頭 ' + rows.length + ' 件を表示）' : '')
       + '　全 ' + (m.scanned || 0) + ' 行を検索（全チーム）';
   } else {
-    label = '最新 ' + rows.length + ' 件を表示　全 ' + (m.scanned || 0) + ' 行（古い顧客は検索欄で絞り込み）';
+    label = '最新 ' + rows.length + ' 件を表示　全 ' + (m.scanned || 0) + ' 行（対象月を選ぶと古い順に絞り込めます）';
   }
   document.getElementById('listCount').textContent = label;
 
   document.getElementById('listBody').innerHTML = rows.map(function (c) {
     var isDup = String(c.重複 || '').indexOf('重複') >= 0;
     return '<tr class="border-t hover:bg-slate-50 ' + (isDup ? 'dup-row' : '') + '">'
-      + td(c.no) + td(c.名前) + td(c.ID) + td(c.媒体) + td(c.案件名) + td(c.担当者) + td(c.運用アカウント)
+      + td(c.no) + td(c.応募日) + td(c.名前) + td(c.ID) + td(c.媒体) + td(c.案件名) + td(c.担当者) + td(c.運用アカウント)
       + '<td class="px-3 py-2">' + (c.ステータス ? '<span class="inline-block px-2 py-0.5 rounded-full bg-slate-100 text-xs">' + escHtml(c.ステータス) + '</span>' : '') + '</td>'
       + '<td class="px-3 py-2 text-red-600 text-xs">' + (isDup ? '重複あり' + (c.重複元NO ? '（元:' + escHtml(c.重複元NO) + '）' : '') : '') + '</td>'
       + '</tr>';
-  }).join('') || '<tr><td colspan="9" class="px-3 py-4 text-slate-400 text-sm">該当する顧客がありません。</td></tr>';
+  }).join('') || '<tr><td colspan="10" class="px-3 py-4 text-slate-400 text-sm">該当する顧客がありません。</td></tr>';
 }
 function td(v) { return '<td class="px-3 py-2">' + escHtml(v == null ? '' : String(v)) + '</td>'; }
+
+/* ============================================================
+ *  未対応リスト（自分が担当した顧客のうち、対応待ちのみ）
+ * ============================================================ */
+var mineDebounce = null;
+function onMineFilterChange() {
+  clearTimeout(mineDebounce);
+  mineDebounce = setTimeout(function () { loadMine(false); }, 400);
+}
+function loadMine(showLoad) {
+  if (!state.token) return;
+  var word = document.getElementById('mWord').value.trim();
+  if (showLoad) showOverlay(true);
+  document.getElementById('mineCount').textContent = '読み込み中…';
+  document.getElementById('mineBody').innerHTML =
+    '<tr><td colspan="9" class="px-3 py-6 text-center text-slate-400 text-sm">読み込み中…</td></tr>';
+  return call('getCustomers', state.token, { mode: 'mine', query: { word: word }, limit: 500 }).then(function (res) {
+    state.mine = res.rows || [];
+    state.mineMeta = res || {};
+    renderMine();
+  }).catch(function (e) {
+    document.getElementById('mineCount').textContent = '';
+    document.getElementById('mineBody').innerHTML =
+      '<tr><td colspan="9" class="px-3 py-4 text-red-600 text-sm">読み込みエラー：' + escHtml(errMsg(e)) + '</td></tr>';
+  }).then(function () { if (showLoad) showOverlay(false); });
+}
+function renderMine() {
+  var rows = state.mine || [];
+  document.getElementById('mineCount').textContent = '未対応 ' + rows.length + ' 件（古い順）';
+  document.getElementById('mineBody').innerHTML = rows.map(function (c) {
+    return '<tr class="border-t hover:bg-slate-50" data-no="' + escAttr(c.no) + '">'
+      + td(c.no) + td(c.応募日) + td(c.名前) + td(c.ID) + td(c.媒体) + td(c.案件名) + td(c.運用アカウント)
+      + '<td class="px-2 py-1.5"><select class="mine-status border rounded px-1 py-1 text-sm"><option value="">（未設定）</option>' + selOpts(state.options.status, c.ステータス) + '</select></td>'
+      + '<td class="px-2 py-1.5"><button class="mine-save bg-blue-600 hover:bg-blue-700 text-white rounded px-2 py-1 text-xs">保存</button></td>'
+      + '</tr>';
+  }).join('') || '<tr><td colspan="9" class="px-3 py-4 text-slate-400 text-sm">未対応の顧客はありません。</td></tr>';
+}
+document.getElementById('mineBody').addEventListener('click', function (e) {
+  if (!e.target.classList.contains('mine-save')) return;
+  var tr = e.target.closest('tr');
+  var no = tr.getAttribute('data-no');
+  var sel = tr.querySelector('.mine-status');
+  var status = sel.value;
+  if (!status) { alert('ステータスを選択してください。'); return; }
+  showOverlay(true);
+  call('updateCustomerStatus', state.token, no, status).then(function () {
+    return loadMine(false);
+  }).then(function () {
+    loadCustomers(false);
+  }).catch(function (e) {
+    alert('保存に失敗しました：' + errMsg(e));
+  }).then(function () { showOverlay(false); });
+});
+
+/* ============================================================
+ *  重複リスト
+ * ============================================================ */
+var dupDebounce2 = null;
+function onDupFilterChange() {
+  clearTimeout(dupDebounce2);
+  dupDebounce2 = setTimeout(function () { loadDup(false); }, 400);
+}
+function loadDup(showLoad) {
+  if (!state.token) return;
+  var word = document.getElementById('dWord').value.trim();
+  if (showLoad) showOverlay(true);
+  document.getElementById('dupCount').textContent = '読み込み中…';
+  document.getElementById('dupBody').innerHTML =
+    '<tr><td colspan="9" class="px-3 py-6 text-center text-slate-400 text-sm">読み込み中…</td></tr>';
+  return call('getCustomers', state.token, { mode: 'search', query: { word: word, dupOnly: true }, limit: 500 }).then(function (res) {
+    state.dup = res.rows || [];
+    state.dupMeta = res || {};
+    renderDup();
+  }).catch(function (e) {
+    document.getElementById('dupCount').textContent = '';
+    document.getElementById('dupBody').innerHTML =
+      '<tr><td colspan="9" class="px-3 py-4 text-red-600 text-sm">読み込みエラー：' + escHtml(errMsg(e)) + '</td></tr>';
+  }).then(function () { if (showLoad) showOverlay(false); });
+}
+function renderDup() {
+  var rows = state.dup || [];
+  var m = state.dupMeta || {};
+  document.getElementById('dupCount').textContent = '重複 ' + (m.total || rows.length) + ' 件（全チーム・古い順）';
+  document.getElementById('dupBody').innerHTML = rows.map(function (c) {
+    return '<tr class="border-t hover:bg-slate-50 dup-row">'
+      + td(c.no) + td(c.応募日) + td(c.名前) + td(c.ID) + td(c.媒体) + td(c.案件名) + td(c.担当者) + td(c.運用アカウント) + td(c.重複元NO)
+      + '</tr>';
+  }).join('') || '<tr><td colspan="9" class="px-3 py-4 text-slate-400 text-sm">重複している顧客はありません。</td></tr>';
+}
 
 /* ============================================================
  *  ユーティリティ
