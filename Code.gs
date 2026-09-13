@@ -41,6 +41,8 @@ const OPT_PROJECT = ['投稿作成＋SNS運用', 'アカウント作成＋SNS運
 const OPT_MEDIA   = ['CW', 'ランサーズ', 'シュフティ'];
 // ステータス（S列）：スラッシュは半角 / 、「ﾌﾞﾛｯｸ」は半角カナ
 const OPT_STATUS  = ['垢バン/否認', '公式ライン追加', '面談予約', '面談済み', '辞退/ﾌﾞﾛｯｸ', '対応不可'];
+// 「未対応リスト」で対応完了とみなして非表示にするステータス（2026-09-13 追加：対応不可／垢バン・否認も完了扱い）
+const MINE_DONE_STATUS = ['面談済み', '辞退/ﾌﾞﾛｯｸ', '対応不可', '垢バン/否認'];
 
 /* ========== 管理シートの見出し定義 ========== */
 const MGMT_SHEETS = {
@@ -457,10 +459,10 @@ function getCustomers(token, opts) {
       if (q.dupOnly && String(o.重複 || '').indexOf('重複') < 0) return;
       if (q.month && String(o.応募日 || '').indexOf(q.month) !== 0) return;
     } else if (mode === 'mine') {
-      // 「未対応リスト」：自分が担当した顧客のうち、重複と完了ステータス（面談済み／辞退・ブロック）を除いたもの
+      // 「未対応リスト」：自分が担当した顧客のうち、重複と完了ステータス（面談済み／辞退・ブロック／対応不可／垢バン・否認）を除いたもの
       if (String(o.担当者 || '').trim() !== String(user.表示担当者名 || '').trim()) return;
       if (String(o.重複 || '').indexOf('重複') >= 0) return;
-      if (o.ステータス === '面談済み' || o.ステータス === '辞退/ﾌﾞﾛｯｸ') return;
+      if (MINE_DONE_STATUS.indexOf(o.ステータス) >= 0) return;
       if (word) {
         const hay = ((o.名前 || '') + ' ' + (o.ID || '')).toLowerCase();
         if (hay.indexOf(word) < 0) return;
