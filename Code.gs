@@ -281,6 +281,60 @@ function refreshOwnerValidation_() {
 /** 管理者用：メンバーを増減したあとに手動実行すると M列の候補を更新できる */
 function updateOwnerValidation() { return refreshOwnerValidation_(); }
 
+/** 全ユーザーの運用アカウント名を、顧客リスト N列の入力規則に設定する */
+function refreshAccountValidation_() {
+  const ss = ss_();
+  const cust = ss.getSheetByName(CUSTOMER_SHEET);
+  if (!cust) throw new Error('「' + CUSTOMER_SHEET + '」シートが見つかりません');
+  const names = getAccounts_()
+    .filter(function (a) { return truthy_(a.有効); })
+    .map(function (a) { return String(a.アカウント名 || '').trim(); })
+    .filter(function (v, i, arr) { return v && arr.indexOf(v) === i; });
+  if (!names.length) return;
+  const rule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(names, true)
+    .setAllowInvalid(true)   // 一致しなくても書き込みは通す（UIでは警告のみ）
+    .build();
+  const rows = cust.getMaxRows() - CUSTOMER_START_ROW + 1;
+  cust.getRange(CUSTOMER_START_ROW, COL.運用アカウント, rows, 1).setDataValidation(rule);
+}
+
+/** 管理者用：アカウントを増減したあとに手動実行すると N列の候補を更新できる */
+function updateAccountValidation() { return refreshAccountValidation_(); }
+
+/* ============================================================
+ *  運用アカウントの追加（「新規登録」タブの「＋追加」から）
+ *   自分（ログインユーザー）名義のアカウントとして追加し、
+ *   顧客リスト N列のプルダウン候補も同時に更新する。
+ * ============================================================ */
+function addAccount(token, name) {
+  const user = requireUser_(token);
+  const accountName = String(name || '').trim();
+  if (!accountName) throw new Error('アカウント名を入力してください。');
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    throw new Error('現在ほかの処理が実行中です。数秒待ってからもう一度お試しください。');
+  }
+  try {
+    const aSh = ss_().getSheetByName('ユーザーアカウントマスタ');
+    const already = getAccounts_().some(function (a) {
+      return String(a.userId).trim() === user.userId && String(a.アカウント名).trim() === accountName && truthy_(a.有効);
+    });
+    if (!already) {
+      aSh.appendRow([user.userId, accountName, true]);
+    }
+    refreshAccountValidation_();
+  } finally {
+    lock.releaseLock();
+  }
+
+  const myAccounts = getAccounts_()
+    .filter(function (a) { return String(a.userId).trim() === user.userId && truthy_(a.有効); })
+    .map(function (a) { return a.アカウント名; });
+  return { ok: true, myAccounts: myAccounts };
+}
+
 
 /* ============================================================
  *  ハッシュ（SHA-256 → 16進文字列）

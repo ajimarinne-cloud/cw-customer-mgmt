@@ -75,12 +75,21 @@
           </div>
           <div>
             <label class="block text-xs font-medium text-slate-500 mb-1">使用アカウント</label>
-            <select id="batchAccount" class="border rounded px-2 py-1.5 text-sm" onchange="onAccountChange()"></select>
+            <div class="flex items-center gap-1">
+              <select id="batchAccount" class="border rounded px-2 py-1.5 text-sm" onchange="onAccountChange()"></select>
+              <button type="button" onclick="toggleAddAccount()" class="text-xs text-blue-600 hover:underline px-1" title="新しいアカウントを追加">＋追加</button>
+            </div>
           </div>
           <p class="text-xs text-slate-500 mb-1.5">
             下の欄に貼り付け（コピペ）して「登録する」を押すだけでOK。
             複数人ぶんまとめて貼ってもOK（空行で区切り）。「＋」で次の人の項目を追加できます。
           </p>
+        </div>
+        <div id="addAccountBox" class="hidden flex items-center gap-1 mb-2">
+          <input id="newAccountName" class="border rounded px-2 py-1.5 text-sm w-40" placeholder="新しいアカウント名"
+                 onkeydown="if(event.key==='Enter') submitAddAccount()">
+          <button onclick="submitAddAccount()" class="bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1.5 text-sm">追加</button>
+          <button onclick="toggleAddAccount()" class="border rounded px-3 py-1.5 text-sm">キャンセル</button>
         </div>
         <textarea id="pasteBox" rows="6" class="w-full border rounded p-2 text-sm font-mono"></textarea>
         <div class="flex flex-wrap gap-2 mt-2">
@@ -306,6 +315,30 @@ function onAccountChange() {
   var acct = currentAccount();
   state.batch.forEach(function (r) { if (!(r._result && r._result.ok)) r.運用アカウント = acct; });
   renderBatch();
+}
+
+/* 新しい運用アカウントの追加（自分名義で追加し、顧客リストN列の選択肢も更新される） */
+function toggleAddAccount() {
+  var box = document.getElementById('addAccountBox');
+  box.classList.toggle('hidden');
+  if (!box.classList.contains('hidden')) {
+    document.getElementById('newAccountName').value = '';
+    document.getElementById('newAccountName').focus();
+  }
+}
+function submitAddAccount() {
+  var name = document.getElementById('newAccountName').value.trim();
+  if (!name) { alert('アカウント名を入力してください。'); return; }
+  showOverlay(true);
+  call('addAccount', state.token, name).then(function (res) {
+    state.myAccounts = res.myAccounts || state.myAccounts;
+    initAccountSelect();
+    document.getElementById('batchAccount').value = name;
+    onAccountChange();
+    toggleAddAccount();
+  }).catch(function (e) {
+    alert('追加に失敗しました：' + errMsg(e));
+  }).then(function () { showOverlay(false); });
 }
 
 /* まとめ入力の「使用案件名」選択 */
