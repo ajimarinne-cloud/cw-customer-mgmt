@@ -50,7 +50,9 @@
       <button data-tab="list" class="tab-btn px-3 py-2 text-sm rounded">顧客一覧</button>
       <button data-tab="mine" class="tab-btn px-3 py-2 text-sm rounded">未対応リスト</button>
       <button data-tab="dup"  class="tab-btn px-3 py-2 text-sm rounded">重複リスト</button>
+      <button data-tab="kpi"  class="tab-btn px-3 py-2 text-sm rounded">数字管理</button>
       <div class="ml-auto flex items-center gap-3 text-sm">
+        <button id="undoBtn" onclick="doUndo()" disabled class="text-xs border rounded px-2 py-1 hover:bg-slate-50 opacity-40" title="元に戻せる操作はありません">↩ 元に戻す</button>
         <span id="whoami" class="text-slate-600"></span>
         <button onclick="doLogout()" class="text-slate-500 hover:text-red-600 text-xs border rounded px-2 py-1">ログアウト</button>
       </div>
@@ -177,14 +179,16 @@
               <th class="text-left px-3 py-2">案件名</th>
               <th class="text-left px-3 py-2">担当者</th>
               <th class="text-left px-3 py-2">アカウント</th>
-              <th class="text-left px-3 py-2">ステータス</th>
+              <th class="text-left px-2 py-2">LINE追加</th>
+              <th class="text-left px-2 py-2">ステータス／面談予定日</th>
               <th class="text-left px-3 py-2">重複</th>
+              <th class="px-2 py-2"></th>
             </tr>
           </thead>
           <tbody id="listBody"></tbody>
         </table>
       </div>
-      <p class="text-[11px] text-slate-400">顧客詳細（クリックで開く操作画面）は Phase 2 で追加します。</p>
+      <p class="text-[11px] text-slate-400">自分が担当した顧客の行では、LINE追加・ステータス・面談予定日を直して「保存」できます。間違えたときは、右上の「元に戻す」で直前の操作を取り消せます。</p>
     </section>
 
     <!-- ---------- 未対応リスト（自分が担当した顧客のうち、対応待ちのみ） ---------- -->
@@ -201,7 +205,8 @@
       </div>
       <p class="text-xs text-slate-500">
         自分が担当した顧客のうち、まだ対応が終わっていない方だけを表示します（重複あり／ステータスが「面談済み」「辞退/ﾌﾞﾛｯｸ」の方は表示されません）。
-        ステータスを選んで「保存」を押すと、そのままスプレッドシートに反映されます。
+        「LINE追加にする」と、ステータスを「面談予約」にした日は、数字管理（LINE追加数・アポ日程切数）に自動記録されます。「面談予約」にするときは面談予定日の入力が必須です。
+        面談したあとのアポ済み・YES・採用は、数字管理タブの「面談カレンダー」で入力します。
       </p>
       <div class="bg-white rounded-lg shadow-sm overflow-x-auto">
         <table class="w-full text-sm">
@@ -214,7 +219,8 @@
               <th class="text-left px-3 py-2">媒体</th>
               <th class="text-left px-3 py-2">案件名</th>
               <th class="text-left px-3 py-2">アカウント</th>
-              <th class="text-left px-2 py-2">ステータス</th>
+              <th class="text-left px-2 py-2">LINE追加</th>
+              <th class="text-left px-2 py-2">ステータス／面談予定日</th>
               <th class="px-2 py-2"></th>
             </tr>
           </thead>
@@ -254,6 +260,135 @@
         </table>
       </div>
     </section>
+
+    <!-- ---------- 数字管理（KPI） ---------- -->
+    <section id="kpiView" class="tab-view hidden space-y-3">
+      <div class="bg-white rounded-lg p-4 shadow-sm flex flex-wrap items-end gap-3">
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">表示単位</label>
+          <div class="flex gap-1">
+            <button type="button" data-kpimode="month" class="kpi-mode-btn border rounded px-3 py-1.5 text-sm">月次</button>
+            <button type="button" data-kpimode="quarter" class="kpi-mode-btn border rounded px-3 py-1.5 text-sm">四半期</button>
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">年</label>
+          <select id="kpiYear" class="border rounded px-2 py-1.5 text-sm" onchange="loadKpi()"></select>
+        </div>
+        <div id="kpiMonthWrap">
+          <label class="block text-xs font-medium text-slate-500 mb-1">月</label>
+          <select id="kpiMonth" class="border rounded px-2 py-1.5 text-sm" onchange="loadKpi()"></select>
+        </div>
+        <div id="kpiQuarterWrap" class="hidden">
+          <label class="block text-xs font-medium text-slate-500 mb-1">四半期</label>
+          <select id="kpiQuarter" class="border rounded px-2 py-1.5 text-sm" onchange="loadKpi()">
+            <option value="1">1-3月</option>
+            <option value="2">4-6月</option>
+            <option value="3">7-9月</option>
+            <option value="4">10-12月</option>
+          </select>
+        </div>
+        <button onclick="loadKpi()" class="text-xs border rounded px-3 py-1.5 hover:bg-slate-50">再読込</button>
+      </div>
+
+      <div class="bg-white rounded-lg shadow-sm overflow-x-auto">
+        <div class="p-3 border-b"><h3 class="font-bold text-sm">自分の実績<span id="kpiOwnLabel" class="text-slate-400 font-normal"></span></h3></div>
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 text-slate-500 text-xs">
+            <tr>
+              <th class="text-left px-3 py-2">指標</th>
+              <th class="text-left px-3 py-2">目標（月）</th>
+              <th class="text-left px-3 py-2">現状</th>
+              <th class="text-left px-3 py-2">ギャップ</th>
+              <th class="text-left px-3 py-2">達成率（転換率）</th>
+              <th class="text-left px-3 py-2">今日までの目標</th>
+            </tr>
+          </thead>
+          <tbody id="kpiOwnBody"></tbody>
+        </table>
+        <p class="text-[11px] text-slate-400 px-3 py-2 leading-relaxed">
+          達成率（転換率）＝現状÷ひとつ前の段階の現状×100。
+          LINE追加数÷応募数／アポ日程切数÷LINE追加数／アポ予定数÷アポ日程切数／アポ済数÷アポ予定数／YES数÷アポ済数／採用数÷YES数。
+          応募数だけは 現状÷月の目標×100 です。<br>
+          ギャップ＝目標−現状。今日までの目標＝月の目標×（今日までの日数÷その月の日数）で、現状がそれに届いていないときはギャップを赤字で表示します。
+          過ぎた月は月全体の目標、四半期表示は3か月ぶんの合計で計算します。
+        </p>
+        <p id="kpiSyncMsg" class="text-[11px] px-3 pb-2"></p>
+      </div>
+
+      <div id="kpiTargetSetup" class="bg-white rounded-lg p-4 shadow-sm hidden">
+        <h3 class="font-bold text-sm mb-2">目標スプシの設定</h3>
+        <p class="text-xs text-slate-500 mb-2">
+          目標値を管理している自分専用のスプレッドシートのURL（またはID）を登録すると、上の表に「目標」「ギャップ」「達成率」が表示されます。
+          そのスプシに「KPI目標」という名前のタブを作り、列を「対象月（例：2026-10）／指標（応募数など）／月次目標」の3列にしてください。
+        </p>
+        <div class="flex items-center gap-2">
+          <input id="kpiTargetSheetId" class="border rounded px-2 py-1.5 text-sm flex-1" placeholder="スプレッドシートID">
+          <button onclick="saveTargetSheetId()" class="bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1.5 text-sm">保存</button>
+        </div>
+        <p id="kpiTargetMsg" class="text-xs mt-2"></p>
+
+        <div id="kpiTargetEdit" class="mt-4 border-t pt-3 hidden">
+          <h4 class="font-bold text-sm mb-2">目標を編集（保存すると目標スプシの「KPI目標」タブに反映されます）</h4>
+          <div class="mb-2">
+            <label class="block text-xs font-medium text-slate-500 mb-1">対象月</label>
+            <select id="tgtMonth" class="border rounded px-2 py-1.5 text-sm" onchange="loadTargetEdit()"></select>
+          </div>
+          <div id="tgtFields" class="grid grid-cols-2 md:grid-cols-3 gap-2"></div>
+          <div class="mt-3 flex items-center gap-3">
+            <button onclick="saveTargetEdit()" class="bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1.5 text-sm">目標を保存</button>
+            <span id="tgtMsg" class="text-xs"></span>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-2">空欄にして保存すると、その月のその指標は「目標なし」になります。</p>
+        </div>
+      </div>
+
+      <div id="kpiTeamWrap" class="bg-white rounded-lg shadow-sm overflow-x-auto hidden">
+        <div class="p-3 border-b"><h3 class="font-bold text-sm">チームの運用者</h3></div>
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 text-slate-500 text-xs">
+            <tr>
+              <th class="text-left px-3 py-2">氏名</th>
+              <th class="text-left px-3 py-2">応募数</th>
+              <th class="text-left px-3 py-2">LINE追加数</th>
+              <th class="text-left px-3 py-2">アポ日程切数</th>
+            </tr>
+          </thead>
+          <tbody id="kpiTeamBody"></tbody>
+        </table>
+      </div>
+
+      <div id="kpiCalendarWrap" class="bg-white rounded-lg shadow-sm p-4 hidden">
+        <div class="flex flex-wrap items-end gap-3 mb-3">
+          <h3 class="font-bold text-sm mr-2">面談カレンダー</h3>
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">年</label>
+            <select id="calYear" class="border rounded px-2 py-1.5 text-sm" onchange="loadCalendar()"></select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">月</label>
+            <select id="calMonth" class="border rounded px-2 py-1.5 text-sm" onchange="loadCalendar()"></select>
+          </div>
+        </div>
+        <p class="text-[11px] text-slate-400 mb-2">日付をクリックすると、その日の面談の名前が見えます。「面談実施」にチェックするとアポ済みとして数え、ステータスも「面談済み」になります。YES数・採用数はその日の分を入力して保存します。</p>
+        <div id="calGrid" class="grid grid-cols-7 gap-1 text-xs"></div>
+
+        <div id="calDayPanel" class="mt-4 border-t pt-3 hidden">
+          <h4 class="font-bold text-sm mb-2"><span id="calDayTitle"></span></h4>
+          <div id="calDayList" class="mb-3 space-y-1"></div>
+          <div class="flex flex-wrap items-end gap-3">
+            <label class="text-xs text-slate-500">YES数
+              <input id="calYes" type="number" min="0" step="1" class="block w-24 border rounded px-2 py-1.5 text-sm text-slate-800 mt-1">
+            </label>
+            <label class="text-xs text-slate-500">採用数
+              <input id="calHire" type="number" min="0" step="1" class="block w-24 border rounded px-2 py-1.5 text-sm text-slate-800 mt-1">
+            </label>
+            <button onclick="saveDayCounts()" class="bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1.5 text-sm">この日の数字を保存</button>
+            <span id="calDayMsg" class="text-xs"></span>
+          </div>
+        </div>
+      </div>
+    </section>
   </main>
 </div>
 
@@ -288,7 +423,12 @@ var state = {
   mineMeta: {},
   dup: [],
   dupMeta: {},
-  batch: []            // 解析結果の行
+  batch: [],           // 解析結果の行
+  targetSheetId: '',
+  kpi: {},
+  cal: {},
+  calDay: '',
+  undo: { count: 0, label: '' }
 };
 
 var DEFAULT_PROJECT = '投稿作成＋SNS運用';
@@ -401,6 +541,7 @@ function afterBootstrap(b) {
   state.options = b.options;
   state.myAccounts = b.myAccounts;
   state.owners = b.owners;
+  state.targetSheetId = b.targetSheetId || '';
   document.getElementById('loginView').classList.add('hidden');
   document.getElementById('appView').classList.remove('hidden');
   document.getElementById('whoami').textContent =
@@ -419,7 +560,40 @@ function afterBootstrap(b) {
   }).catch(function () {}).then(function () {
     loadCustomers(false);
   });
+  refreshUndo();
   showOverlay(false);
+}
+
+/* ============================================================
+ *  元に戻す（自分の直前の操作を1つずつ取り消す）
+ * ============================================================ */
+function refreshUndo() {
+  if (!state.token) return Promise.resolve();
+  return call('getUndoInfo', state.token).then(function (r) {
+    state.undo = r || { count: 0, label: '' };
+    var b = document.getElementById('undoBtn');
+    var has = state.undo.count > 0;
+    b.disabled = !has;
+    b.classList.toggle('opacity-40', !has);
+    b.textContent = '↩ 元に戻す' + (has ? '（' + state.undo.count + '）' : '');
+    b.title = has ? '直前の操作：' + state.undo.label : '元に戻せる操作はありません';
+  }).catch(function () {});
+}
+function doUndo() {
+  if (!state.undo || !state.undo.count) return;
+  if (!confirm('直前の操作を元に戻しますか？\n\n' + state.undo.label)) return;
+  showOverlay(true);
+  call('undoLast', state.token).then(function (res) {
+    return reloadAfterChange().then(function () { alert('元に戻しました：' + (res && res.label ? res.label : '')); });
+  }).catch(function (e) {
+    alert('元に戻せませんでした：' + errMsg(e));
+  }).then(function () { return refreshUndo(); }).then(function () { showOverlay(false); });
+}
+function reloadAfterChange() {
+  var jobs = [loadCustomers(false), loadMine(false)];
+  if (Object.keys(state.kpi || {}).length) jobs.push(loadKpi());
+  if (state.cal && state.cal.year) jobs.push(loadCalendar());
+  return Promise.all(jobs).catch(function () {});
 }
 
 function showLogin() {
@@ -451,6 +625,11 @@ function switchTab(tab) {
   if (tab === 'list') renderList();
   if (tab === 'mine') loadMine(false);
   if (tab === 'dup') loadDup(false);
+  if (tab === 'kpi') {
+    initKpiTab();
+    loadKpi();
+    if (state.user && state.user.役割 === '採用者') loadCalendar();
+  }
 }
 document.addEventListener('click', function (e) {
   var b = e.target.closest ? e.target.closest('.tab-btn') : null;
@@ -819,7 +998,7 @@ function loadCustomers(showLoad) {
   if (showLoad) showOverlay(true);
   document.getElementById('listCount').textContent = '読み込み中…';
   document.getElementById('listBody').innerHTML =
-    '<tr><td colspan="10" class="px-3 py-6 text-center text-slate-400 text-sm">読み込み中…</td></tr>';
+    '<tr><td colspan="12" class="px-3 py-6 text-center text-slate-400 text-sm">読み込み中…</td></tr>';
   return call('getCustomers', state.token, opts).then(function (res) {
     state.customers = res.rows || [];
     state.listMeta = res || {};
@@ -827,7 +1006,7 @@ function loadCustomers(showLoad) {
   }).catch(function (e) {
     document.getElementById('listCount').textContent = '';
     document.getElementById('listBody').innerHTML =
-      '<tr><td colspan="10" class="px-3 py-4 text-red-600 text-sm">読み込みエラー：' + escHtml(errMsg(e)) + '</td></tr>';
+      '<tr><td colspan="12" class="px-3 py-4 text-red-600 text-sm">読み込みエラー：' + escHtml(errMsg(e)) + '</td></tr>';
   }).then(function () { if (showLoad) showOverlay(false); });
 }
 
@@ -844,15 +1023,64 @@ function renderList() {
   }
   document.getElementById('listCount').textContent = label;
 
+  var me = String((state.user && state.user.表示担当者名) || '').trim();
   document.getElementById('listBody').innerHTML = rows.map(function (c) {
     var isDup = String(c.重複 || '').indexOf('重複') >= 0;
-    return '<tr class="border-t hover:bg-slate-50 ' + (isDup ? 'dup-row' : '') + '">'
+    var own = !!me && String(c.担当者 || '').trim() === me;
+    var lineCell, statusCell, saveCell;
+    if (own) {
+      var showDate = c.ステータス === '面談予約';
+      lineCell = '<td class="px-2 py-2"><input type="checkbox" class="list-line" data-orig="' + (c.LINE追加 ? '1' : '0') + '"' + (c.LINE追加 ? ' checked' : '') + '></td>';
+      statusCell = '<td class="px-2 py-2">'
+        + '<select class="list-status border rounded px-1 py-1 text-sm" data-orig="' + escAttr(c.ステータス || '') + '"><option value="">（未設定）</option>' + selOpts(state.options.status, c.ステータス) + '</select>'
+        + '<input type="text" inputmode="numeric" placeholder="面談日 例 9/30" class="list-md border rounded px-1 py-1 text-sm mt-1 block w-28' + (showDate ? '' : ' hidden') + '" value="' + escAttr(mdDisplay(c.面談予定日)) + '">'
+        + '</td>';
+      saveCell = '<td class="px-2 py-2"><button class="list-save bg-blue-600 hover:bg-blue-700 text-white rounded px-2 py-1 text-xs">保存</button></td>';
+    } else {
+      lineCell = '<td class="px-2 py-2">' + (c.LINE追加 ? '<span class="inline-block px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-xs">追加済み</span>' : '') + '</td>';
+      statusCell = '<td class="px-2 py-2">' + (c.ステータス ? '<span class="inline-block px-2 py-0.5 rounded-full bg-slate-100 text-xs">' + escHtml(c.ステータス) + '</span>' : '') + '</td>';
+      saveCell = '<td></td>';
+    }
+    return '<tr class="border-t hover:bg-slate-50 ' + (isDup ? 'dup-row' : '') + '" data-no="' + escAttr(c.no) + '">'
       + td(c.no) + td(c.応募日) + td(c.名前) + td(c.ID) + td(c.媒体) + td(c.案件名) + td(c.担当者) + td(c.運用アカウント)
-      + '<td class="px-3 py-2">' + (c.ステータス ? '<span class="inline-block px-2 py-0.5 rounded-full bg-slate-100 text-xs">' + escHtml(c.ステータス) + '</span>' : '') + '</td>'
+      + lineCell + statusCell
       + '<td class="px-3 py-2 text-red-600 text-xs">' + (isDup ? '重複あり' + (c.重複元NO ? '（元:' + escHtml(c.重複元NO) + '）' : '') : '') + '</td>'
+      + saveCell
       + '</tr>';
-  }).join('') || '<tr><td colspan="10" class="px-3 py-4 text-slate-400 text-sm">該当する顧客がありません。</td></tr>';
+  }).join('') || '<tr><td colspan="12" class="px-3 py-4 text-slate-400 text-sm">該当する顧客がありません。</td></tr>';
 }
+/* 顧客一覧：自分の担当行の編集（LINE追加・ステータス・面談予定日） */
+document.getElementById('listBody').addEventListener('change', function (e) {
+  if (!e.target.classList.contains('list-status')) return;
+  e.target.closest('tr').querySelector('.list-md').classList.toggle('hidden', e.target.value !== '面談予約');
+});
+document.getElementById('listBody').addEventListener('click', function (e) {
+  if (!e.target.classList.contains('list-save')) return;
+  var tr = e.target.closest('tr');
+  var no = tr.getAttribute('data-no');
+  var lineBox = tr.querySelector('.list-line');
+  var sel = tr.querySelector('.list-status');
+  var status = sel.value;
+  var md = parseMeetingDate(tr.querySelector('.list-md').value);
+  var patch = {};
+  var changed = false;
+  if ((lineBox.checked ? '1' : '0') !== lineBox.getAttribute('data-orig')) { patch.line = lineBox.checked; changed = true; }
+  if (status !== sel.getAttribute('data-orig')) { patch.status = status; changed = true; }
+  if (status === '面談予約') {
+    if (!md) { alert('「面談予約」にするときは、面談予定日を「9/30」のように入力してください。'); return; }
+    patch.md = md;
+    if (md !== String(((state.customers || []).filter(function (c) { return String(c.no) === String(no); })[0] || {}).面談予定日 || '')) changed = true;
+  }
+  if (!changed) { alert('変更がありません。'); return; }
+  showOverlay(true);
+  call('updateCustomerFields', state.token, no, patch).then(function () {
+    return loadCustomers(false);
+  }).then(function () {
+    return refreshUndo();
+  }).catch(function (err) {
+    alert('保存に失敗しました：' + errMsg(err));
+  }).then(function () { showOverlay(false); });
+});
 function td(v) { return '<td class="px-3 py-2">' + escHtml(v == null ? '' : String(v)) + '</td>'; }
 
 /* ============================================================
@@ -869,7 +1097,7 @@ function loadMine(showLoad) {
   if (showLoad) showOverlay(true);
   document.getElementById('mineCount').textContent = '読み込み中…';
   document.getElementById('mineBody').innerHTML =
-    '<tr><td colspan="9" class="px-3 py-6 text-center text-slate-400 text-sm">読み込み中…</td></tr>';
+    '<tr><td colspan="10" class="px-3 py-6 text-center text-slate-400 text-sm">読み込み中…</td></tr>';
   return call('getCustomers', state.token, { mode: 'mine', query: { word: word }, limit: 500 }).then(function (res) {
     state.mine = res.rows || [];
     state.mineMeta = res || {};
@@ -877,32 +1105,84 @@ function loadMine(showLoad) {
   }).catch(function (e) {
     document.getElementById('mineCount').textContent = '';
     document.getElementById('mineBody').innerHTML =
-      '<tr><td colspan="9" class="px-3 py-4 text-red-600 text-sm">読み込みエラー：' + escHtml(errMsg(e)) + '</td></tr>';
+      '<tr><td colspan="10" class="px-3 py-4 text-red-600 text-sm">読み込みエラー：' + escHtml(errMsg(e)) + '</td></tr>';
   }).then(function () { if (showLoad) showOverlay(false); });
 }
 function renderMine() {
   var rows = state.mine || [];
   document.getElementById('mineCount').textContent = '未対応 ' + rows.length + ' 件（古い順）';
   document.getElementById('mineBody').innerHTML = rows.map(function (c) {
+    var lineCell = c.LINE追加
+      ? '<span class="inline-block px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-xs">追加済み</span>'
+      : '<button class="line-btn text-xs border rounded px-2 py-1 hover:bg-slate-50" data-no="' + escAttr(c.no) + '">LINE追加にする</button>';
+    var showDate = c.ステータス === '面談予約';
     return '<tr class="border-t hover:bg-slate-50" data-no="' + escAttr(c.no) + '">'
       + td(c.no) + td(c.応募日) + td(c.名前) + td(c.ID) + td(c.媒体) + td(c.案件名) + td(c.運用アカウント)
-      + '<td class="px-2 py-1.5"><select class="mine-status border rounded px-1 py-1 text-sm"><option value="">（未設定）</option>' + selOpts(state.options.status, c.ステータス) + '</select></td>'
+      + '<td class="px-2 py-1.5 whitespace-nowrap">' + lineCell + '</td>'
+      + '<td class="px-2 py-1.5">'
+        + '<select class="mine-status border rounded px-1 py-1 text-sm"><option value="">（未設定）</option>' + selOpts(state.options.status, c.ステータス) + '</select>'
+        + '<input type="text" inputmode="numeric" placeholder="面談日 例 9/30" class="mine-meeting-date border rounded px-1 py-1 text-sm mt-1 block w-28' + (showDate ? '' : ' hidden') + '" value="' + escAttr(mdDisplay(c.面談予定日)) + '">'
+      + '</td>'
       + '<td class="px-2 py-1.5"><button class="mine-save bg-blue-600 hover:bg-blue-700 text-white rounded px-2 py-1 text-xs">保存</button></td>'
       + '</tr>';
-  }).join('') || '<tr><td colspan="9" class="px-3 py-4 text-slate-400 text-sm">未対応の顧客はありません。</td></tr>';
+  }).join('') || '<tr><td colspan="10" class="px-3 py-4 text-slate-400 text-sm">未対応の顧客はありません。</td></tr>';
 }
+/* 面談予定日は年を出さずに「9/30」と表示・入力する（年は自動で補う） */
+function mdDisplay(ymd) {
+  var m = String(ymd || '').match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  return m ? Number(m[2]) + '/' + Number(m[3]) : '';
+}
+function parseMeetingDate(text) {
+  var s = String(text || '').trim().replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); });
+  var m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/);
+  var y, mo, d;
+  if (m) { y = Number(m[1]); mo = Number(m[2]); d = Number(m[3]); }
+  else {
+    m = s.match(/^(\d{1,2})\s*[\/月\-]\s*(\d{1,2})\s*日?$/);
+    if (!m) return '';
+    mo = Number(m[1]); d = Number(m[2]);
+    var now = new Date();
+    y = now.getFullYear();
+    // 2か月以上前の日付になる場合は来年の日付とみなす（年末に来月の面談を入れる場合など）
+    if (new Date(y, mo - 1, d) < new Date(now.getFullYear(), now.getMonth(), now.getDate() - 60)) y += 1;
+  }
+  var dt = new Date(y, mo - 1, d);
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return '';
+  return y + '-' + ('0' + mo).slice(-2) + '-' + ('0' + d).slice(-2);
+}
+document.getElementById('mineBody').addEventListener('change', function (e) {
+  if (!e.target.classList.contains('mine-status')) return;
+  var tr = e.target.closest('tr');
+  tr.querySelector('.mine-meeting-date').classList.toggle('hidden', e.target.value !== '面談予約');
+});
 document.getElementById('mineBody').addEventListener('click', function (e) {
+  var lineBtn = e.target.closest ? e.target.closest('.line-btn') : null;
+  if (lineBtn) {
+    var lineNo = lineBtn.getAttribute('data-no');
+    showOverlay(true);
+    call('markLineAdded', state.token, lineNo).then(function () {
+      loadMine(false);
+      refreshUndo();
+    }).catch(function (e) {
+      alert('失敗しました：' + errMsg(e));
+    }).then(function () { showOverlay(false); });
+    return;
+  }
   if (!e.target.classList.contains('mine-save')) return;
   var tr = e.target.closest('tr');
   var no = tr.getAttribute('data-no');
   var sel = tr.querySelector('.mine-status');
   var status = sel.value;
+  var meetingRaw = tr.querySelector('.mine-meeting-date').value;
+  var meetingDate = parseMeetingDate(meetingRaw);
   if (!status) { alert('ステータスを選択してください。'); return; }
+  if (status === '面談予約' && !meetingDate) { alert('「面談予約」にするときは、面談予定日を「9/30」のように入力してください。'); return; }
   showOverlay(true);
-  call('updateCustomerStatus', state.token, no, status).then(function () {
+  call('updateCustomerStatus', state.token, no, status, meetingDate).then(function () {
     return loadMine(false);
   }).then(function () {
     loadCustomers(false);
+    refreshUndo();
   }).catch(function (e) {
     alert('保存に失敗しました：' + errMsg(e));
   }).then(function () { showOverlay(false); });
@@ -942,6 +1222,324 @@ function renderDup() {
       + td(c.no) + td(c.応募日) + td(c.名前) + td(c.ID) + td(c.媒体) + td(c.案件名) + td(c.担当者) + td(c.運用アカウント) + td(c.重複元NO)
       + '</tr>';
   }).join('') || '<tr><td colspan="9" class="px-3 py-4 text-slate-400 text-sm">重複している顧客はありません。</td></tr>';
+}
+
+/* ============================================================
+ *  数字管理（KPI）
+ * ============================================================ */
+var kpiMode = 'month';
+function initKpiTab() {
+  var yearSel = document.getElementById('kpiYear');
+  if (yearSel.options.length === 0) {
+    var now = new Date();
+    var curYear = now.getFullYear();
+    for (var y = curYear - 1; y <= curYear + 1; y++) {
+      yearSel.insertAdjacentHTML('beforeend', '<option value="' + y + '">' + y + '年</option>');
+    }
+    yearSel.value = curYear;
+    var monthSel = document.getElementById('kpiMonth');
+    for (var m = 1; m <= 12; m++) {
+      monthSel.insertAdjacentHTML('beforeend', '<option value="' + m + '">' + m + '月</option>');
+    }
+    monthSel.value = now.getMonth() + 1;
+    setKpiMode('month');
+  }
+  var isRecruiter = state.user && state.user.役割 === '採用者';
+  document.getElementById('kpiTargetSetup').classList.toggle('hidden', !isRecruiter);
+  document.getElementById('kpiCalendarWrap').classList.toggle('hidden', !isRecruiter);
+  if (isRecruiter) {
+    document.getElementById('kpiTargetSheetId').value = state.targetSheetId || '';
+    initCalendarControls();
+    refreshTargetEdit();
+  }
+}
+
+/* 目標をサイト上で編集（目標スプシの「KPI目標」タブへ書き込む） */
+var TARGET_METRICS = ['応募数', 'LINE追加数', 'アポ日程切数', 'アポ予定数（予約）', 'アポ済数（面談完了）', 'YES数', '採用数'];
+function refreshTargetEdit() {
+  var box = document.getElementById('kpiTargetEdit');
+  var has = !!state.targetSheetId;
+  box.classList.toggle('hidden', !has);
+  if (!has) return;
+  var sel = document.getElementById('tgtMonth');
+  if (sel.options.length === 0) {
+    var now = new Date();
+    for (var i = -3; i <= 11; i++) {
+      var d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      var ym = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2);
+      sel.insertAdjacentHTML('beforeend', '<option value="' + ym + '">' + ym + '</option>');
+    }
+    sel.value = todayStr().slice(0, 7);
+    document.getElementById('tgtFields').innerHTML = TARGET_METRICS.map(function (m) {
+      return '<label class="text-xs text-slate-500">' + escHtml(m)
+        + '<input type="number" min="0" step="any" data-metric="' + escAttr(m) + '" class="tgt-input block w-full border rounded px-2 py-1.5 text-sm text-slate-800 mt-1"></label>';
+    }).join('');
+  }
+  loadTargetEdit();
+}
+function loadTargetEdit() {
+  var ym = document.getElementById('tgtMonth').value;
+  var msg = document.getElementById('tgtMsg');
+  msg.textContent = '';
+  return call('getMyKpiTargets', state.token, ym).then(function (res) {
+    var inputs = document.querySelectorAll('.tgt-input');
+    for (var i = 0; i < inputs.length; i++) {
+      var v = res.values ? res.values[inputs[i].getAttribute('data-metric')] : null;
+      inputs[i].value = (v == null) ? '' : v;
+    }
+  }).catch(function (e) {
+    msg.className = 'text-xs text-red-600';
+    msg.textContent = 'エラー：' + errMsg(e);
+  });
+}
+function saveTargetEdit() {
+  var ym = document.getElementById('tgtMonth').value;
+  var msg = document.getElementById('tgtMsg');
+  var values = {};
+  var inputs = document.querySelectorAll('.tgt-input');
+  for (var i = 0; i < inputs.length; i++) values[inputs[i].getAttribute('data-metric')] = inputs[i].value.trim();
+  showOverlay(true);
+  call('saveMyKpiTargets', state.token, ym, values).then(function () {
+    msg.className = 'text-xs text-green-700';
+    msg.textContent = '保存しました。';
+    loadKpi();
+  }).catch(function (e) {
+    msg.className = 'text-xs text-red-600';
+    msg.textContent = 'エラー：' + errMsg(e);
+  }).then(function () { showOverlay(false); });
+}
+function setKpiMode(mode) {
+  kpiMode = mode;
+  var btns = document.querySelectorAll('.kpi-mode-btn');
+  for (var i = 0; i < btns.length; i++) {
+    var on = btns[i].getAttribute('data-kpimode') === mode;
+    btns[i].classList.toggle('bg-blue-600', on);
+    btns[i].classList.toggle('text-white', on);
+  }
+  document.getElementById('kpiMonthWrap').classList.toggle('hidden', mode !== 'month');
+  document.getElementById('kpiQuarterWrap').classList.toggle('hidden', mode !== 'quarter');
+}
+document.addEventListener('click', function (e) {
+  var b = e.target.closest ? e.target.closest('.kpi-mode-btn') : null;
+  if (b) { setKpiMode(b.getAttribute('data-kpimode')); loadKpi(); }
+});
+
+function loadKpi() {
+  if (!state.token) return;
+  var opts = { mode: kpiMode, year: Number(document.getElementById('kpiYear').value) };
+  if (kpiMode === 'quarter') opts.quarter = Number(document.getElementById('kpiQuarter').value);
+  else opts.month = Number(document.getElementById('kpiMonth').value);
+
+  showOverlay(true);
+  call('getKpiDashboard', state.token, opts).then(function (res) {
+    state.kpi = res;
+    renderKpi();
+  }).catch(function (e) {
+    document.getElementById('kpiOwnBody').innerHTML =
+      '<tr><td colspan="6" class="px-3 py-4 text-red-600 text-sm">読み込みエラー：' + escHtml(errMsg(e)) + '</td></tr>';
+  }).then(function () { showOverlay(false); });
+}
+
+function kpiRateText(current, target) {
+  if (!target) return '―';
+  return (Math.round((current / target) * 1000) / 10) + '%';
+}
+/* 転換率の「ひとつ前の段階」（応募数は目標に対する達成率なので対象外） */
+var KPI_PREV = {
+  'LINE追加数': '応募数',
+  'アポ日程切数': 'LINE追加数',
+  'アポ予定数（予約）': 'アポ日程切数',
+  'アポ済数（面談完了）': 'アポ予定数（予約）',
+  'YES数': 'アポ済数（面談完了）',
+  '採用数': 'YES数'
+};
+function renderKpi() {
+  var k = state.kpi || {};
+  var counts = (k.own && k.own.counts) || {};
+  var targets = k.targets || {};
+  var toDate = k.targetsToDate || {};
+  var metrics = k.metrics || [];
+  document.getElementById('kpiOwnLabel').textContent = k.own ? '（' + k.own.label + '）' : '';
+
+  document.getElementById('kpiOwnBody').innerHTML = metrics.map(function (metric) {
+    var cur = (counts[metric] != null) ? counts[metric] : 0;
+    var hasTarget = k.role === '採用者' && k.hasTargetSheet && targets[metric] != null;
+    var tgt = hasTarget ? targets[metric] : null;
+    var td2 = hasTarget ? (toDate[metric] != null ? toDate[metric] : 0) : null;
+    var gap = hasTarget ? Math.round((tgt - cur) * 10) / 10 : null;
+    var behind = hasTarget && cur < td2;   // 今日までの目標に届いていない
+    var prev = KPI_PREV[metric];
+    var rate = prev ? kpiRateText(cur, counts[prev] || 0) : (hasTarget ? kpiRateText(cur, tgt) : '―');
+    return '<tr class="border-t">'
+      + '<td class="px-3 py-2">' + escHtml(metric) + '</td>'
+      + '<td class="px-3 py-2">' + (hasTarget ? escHtml(String(tgt)) : '―') + '</td>'
+      + '<td class="px-3 py-2">' + escHtml(String(cur)) + '</td>'
+      + '<td class="px-3 py-2 ' + (behind ? 'text-red-600 font-bold' : '') + '">' + (hasTarget ? escHtml(String(gap)) : '―') + '</td>'
+      + '<td class="px-3 py-2">' + rate + '</td>'
+      + '<td class="px-3 py-2">' + (hasTarget ? escHtml(String(td2)) : '―') + '</td>'
+      + '</tr>';
+  }).join('');
+
+  var sync = document.getElementById('kpiSyncMsg');
+  if (k.actualsSync && k.actualsSync.ok) {
+    sync.className = 'text-[11px] px-3 pb-2 text-green-700';
+    sync.textContent = '目標スプシの「KPI実績」タブに、この月の現状と転換率を書き出しました。';
+  } else if (k.actualsSync) {
+    sync.className = 'text-[11px] px-3 pb-2 text-red-600';
+    sync.textContent = k.actualsSync.message || '目標スプシの「KPI実績」タブに書き込めませんでした。';
+  } else {
+    sync.textContent = '';
+  }
+
+  var teamWrap = document.getElementById('kpiTeamWrap');
+  if (k.role === '採用者' && k.team && k.team.length) {
+    teamWrap.classList.remove('hidden');
+    document.getElementById('kpiTeamBody').innerHTML = k.team.map(function (t) {
+      return '<tr class="border-t">'
+        + '<td class="px-3 py-2">' + escHtml(t.氏名) + '</td>'
+        + '<td class="px-3 py-2">' + escHtml(String(t.counts.応募数)) + '</td>'
+        + '<td class="px-3 py-2">' + escHtml(String(t.counts.LINE追加数)) + '</td>'
+        + '<td class="px-3 py-2">' + escHtml(String(t.counts.アポ日程切数)) + '</td>'
+        + '</tr>';
+    }).join('');
+  } else {
+    teamWrap.classList.add('hidden');
+  }
+}
+
+function saveTargetSheetId() {
+  var id = document.getElementById('kpiTargetSheetId').value.trim();
+  var msg = document.getElementById('kpiTargetMsg');
+  showOverlay(true);
+  call('setMyTargetSheetId', state.token, id).then(function (res) {
+    id = (res && res.id != null) ? res.id : id;   // URLを貼った場合もIDだけに直して表示
+    document.getElementById('kpiTargetSheetId').value = id;
+    state.targetSheetId = id;
+    msg.className = 'text-xs mt-2 text-green-700';
+    msg.textContent = '保存しました。';
+    loadKpi();
+    refreshTargetEdit();
+  }).catch(function (e) {
+    msg.className = 'text-xs mt-2 text-red-600';
+    msg.textContent = 'エラー：' + errMsg(e);
+  }).then(function () { showOverlay(false); });
+}
+
+/* 面談カレンダー（採用者のみ）：面談予定日を月めくりで表示 */
+function initCalendarControls() {
+  var yearSel = document.getElementById('calYear');
+  if (yearSel.options.length === 0) {
+    var now = new Date();
+    var curYear = now.getFullYear();
+    for (var y = curYear - 1; y <= curYear + 1; y++) {
+      yearSel.insertAdjacentHTML('beforeend', '<option value="' + y + '">' + y + '年</option>');
+    }
+    yearSel.value = curYear;
+    var monthSel = document.getElementById('calMonth');
+    for (var m = 1; m <= 12; m++) {
+      monthSel.insertAdjacentHTML('beforeend', '<option value="' + m + '">' + m + '月</option>');
+    }
+    monthSel.value = now.getMonth() + 1;
+  }
+}
+function loadCalendar() {
+  if (!state.token || !(state.user && state.user.役割 === '採用者')) return;
+  var year = Number(document.getElementById('calYear').value);
+  var month = Number(document.getElementById('calMonth').value);
+  return call('getMeetingCalendar', state.token, { year: year, month: month }).then(function (res) {
+    state.cal = res;
+    // 表示中の月にない日付を選んでいたら選択を外す
+    if (state.calDay && state.calDay.slice(0, 7) !== res.year + '-' + pad2c_(res.month)) state.calDay = '';
+    renderCalendar(res);
+  }).catch(function () {
+    document.getElementById('calGrid').innerHTML = '';
+  });
+}
+function pad2c_(n) { return ('0' + n).slice(-2); }
+function renderCalendar(res) {
+  var year = res.year, month = res.month;
+  var days = res.days || {};
+  var totals = res.totals || {};
+  var startWeekday = new Date(year, month - 1, 1).getDay();
+  var daysInMonth = new Date(year, month, 0).getDate();
+
+  var cells = ['日', '月', '火', '水', '木', '金', '土'].map(function (w) {
+    return '<div class="text-center font-medium text-slate-400 py-1">' + w + '</div>';
+  });
+  for (var i = 0; i < startWeekday; i++) cells.push('<div></div>');
+  for (var d = 1; d <= daysInMonth; d++) {
+    var ymd = year + '-' + pad2c_(month) + '-' + pad2c_(d);
+    var count = (days[ymd] || []).length;
+    var t = totals[ymd] || {};
+    var lines = '';
+    if (count) lines += '<div class="text-blue-700 font-bold">面談' + count + '件</div>';
+    if (t.done) lines += '<div class="text-emerald-700">済' + t.done + '</div>';
+    if (t.yes) lines += '<div class="text-sky-700">YES ' + t.yes + '</div>';
+    if (t.hire) lines += '<div class="text-violet-700">採用 ' + t.hire + '</div>';
+    var has = count || t.done || t.yes || t.hire;
+    cells.push(
+      '<div data-ymd="' + ymd + '" class="cal-cell cursor-pointer border rounded p-1 min-h-[56px] hover:bg-slate-50'
+      + (has ? ' bg-blue-50 border-blue-200' : '') + (state.calDay === ymd ? ' ring-2 ring-blue-500' : '') + '">'
+      + '<div class="text-slate-500">' + d + '</div>' + lines
+      + '</div>'
+    );
+  }
+  document.getElementById('calGrid').innerHTML = cells.join('');
+  renderDayPanel();
+}
+document.getElementById('calGrid').addEventListener('click', function (e) {
+  var cell = e.target.closest ? e.target.closest('.cal-cell') : null;
+  if (!cell) return;
+  state.calDay = cell.getAttribute('data-ymd');
+  renderCalendar(state.cal || {});
+});
+
+/* 選んだ日のパネル：面談の名前とチェック、YES数・採用数の入力 */
+function renderDayPanel() {
+  var panel = document.getElementById('calDayPanel');
+  var day = state.calDay;
+  if (!day) { panel.classList.add('hidden'); return; }
+  panel.classList.remove('hidden');
+  var cal = state.cal || {};
+  var list = (cal.days && cal.days[day]) || [];
+  var p = day.split('-');
+  document.getElementById('calDayTitle').textContent = Number(p[1]) + '月' + Number(p[2]) + '日';
+  document.getElementById('calDayList').innerHTML = list.map(function (c) {
+    return '<label class="flex items-center gap-2 text-sm">'
+      + '<input type="checkbox" class="cal-done" data-no="' + escAttr(c.no) + '"' + (c.done ? ' checked' : '') + '>'
+      + '<span>' + escHtml(c.名前) + '</span>'
+      + (c.ステータス ? '<span class="text-[11px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500">' + escHtml(c.ステータス) + '</span>' : '')
+      + '<span class="text-[11px] text-slate-400">← 面談を実施したらチェック</span>'
+      + '</label>';
+  }).join('') || '<p class="text-sm text-slate-400">この日に面談予定の方はいません。</p>';
+  var m = (cal.manual && cal.manual[day]) || {};
+  document.getElementById('calYes').value = m.yes ? m.yes : '';
+  document.getElementById('calHire').value = m.hire ? m.hire : '';
+  document.getElementById('calDayMsg').textContent = '';
+}
+document.getElementById('calDayList').addEventListener('change', function (e) {
+  if (!e.target.classList.contains('cal-done')) return;
+  var box = e.target;
+  var no = box.getAttribute('data-no');
+  showOverlay(true);
+  call('setMeetingDone', state.token, no, box.checked, state.calDay).then(function () {
+    return Promise.all([loadCalendar(), loadKpi(), refreshUndo()]);
+  }).catch(function (err) {
+    box.checked = !box.checked;
+    alert('保存に失敗しました：' + errMsg(err));
+  }).then(function () { showOverlay(false); });
+});
+function saveDayCounts() {
+  var msg = document.getElementById('calDayMsg');
+  showOverlay(true);
+  call('saveDayCounts', state.token, state.calDay, document.getElementById('calYes').value.trim(), document.getElementById('calHire').value.trim()).then(function () {
+    msg.className = 'text-xs text-green-700';
+    msg.textContent = '保存しました。';
+    return Promise.all([loadCalendar(), loadKpi(), refreshUndo()]);
+  }).catch(function (e) {
+    msg.className = 'text-xs text-red-600';
+    msg.textContent = 'エラー：' + errMsg(e);
+  }).then(function () { showOverlay(false); });
 }
 
 /* ============================================================
