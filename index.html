@@ -466,30 +466,29 @@
             <select id="calMonth" class="border rounded px-2 py-1.5 text-sm" onchange="loadCalendar()"></select>
           </div>
         </div>
-        <p class="text-[11px] text-slate-400 mb-2">日付をクリックすると、その日の面談の名前が見えます。「面談実施」にチェックするとアポ済みとして数え、ステータスも「面談済み」になります。YES・採用は、下の一覧で人を選んで記録できます。</p>
+        <p class="text-[11px] text-slate-400 mb-2">日付をクリックすると、その日の面談の方が出ます。人ごとに「面談済み」→「YES」→「採用／不採用」を選ぶと、その場で数字管理に記録されます。採用が決まらなかった方は、次の日以降の「採用の結果待ち」に出続けます。</p>
         <div id="calGrid" class="grid grid-cols-7 gap-1 text-xs"></div>
 
         <div id="calDayPanel" class="mt-4 border-t pt-3 hidden">
           <h4 class="font-bold text-sm mb-2"><span id="calDayTitle"></span></h4>
-          <div id="calDayList" class="mb-3 space-y-1"></div>
 
-          <div class="mt-2">
-            <h5 class="text-xs font-bold text-slate-600 mb-1">YES・採用を記録（面談した方のうち、まだ決まっていない方）</h5>
-            <p class="text-[11px] text-slate-400 mb-1">チェックすると、この日（<span id="calDayTitle2"></span>）のYES・採用として記録します。面談した日が別の日でも、まだYES・採用になっていない方はここに出続けます。</p>
-            <p id="calNamedSummary" class="text-xs text-slate-600 mb-1"></p>
-            <div id="calCandList" class="space-y-1 max-h-48 overflow-y-auto border rounded p-2 bg-slate-50"></div>
+          <h5 class="text-xs font-bold text-slate-600 mb-1">この日の面談</h5>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-slate-50 text-slate-500 text-xs">
+                <tr>
+                  <th class="text-left px-2 py-1.5">名前</th>
+                  <th class="text-center px-2 py-1.5">面談済み</th>
+                  <th class="text-center px-2 py-1.5">YES</th>
+                  <th class="text-left px-2 py-1.5">採用</th>
+                </tr>
+              </thead>
+              <tbody id="calDayList"></tbody>
+            </table>
           </div>
 
-          <div class="flex flex-wrap items-end gap-3 mt-3">
-            <label class="text-xs text-slate-500">YES数（人を指定しない分を追加）
-              <input id="calYes" type="number" min="0" step="1" class="block w-24 border rounded px-2 py-1.5 text-sm text-slate-800 mt-1">
-            </label>
-            <label class="text-xs text-slate-500">採用数（人を指定しない分を追加）
-              <input id="calHire" type="number" min="0" step="1" class="block w-24 border rounded px-2 py-1.5 text-sm text-slate-800 mt-1">
-            </label>
-            <button onclick="saveDayCounts()" class="bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1.5 text-sm">この日の数字を保存</button>
-            <span id="calDayMsg" class="text-xs"></span>
-          </div>
+          <h5 class="text-xs font-bold text-slate-600 mt-4 mb-1">採用の結果待ち（前の日から持ち越し）</h5>
+          <div id="calCarryList" class="space-y-1 border border-orange-200 bg-orange-50 rounded p-2"></div>
         </div>
       </div>
     </section>
@@ -2010,7 +2009,20 @@ document.getElementById('calGrid').addEventListener('click', function (e) {
   renderCalendar(state.cal || {});
 });
 
-/* 選んだ日のパネル：面談の名前とチェック、YES・採用の候補者チェック、数字のみの入力 */
+/* 選んだ日のパネル：その日の面談の方ごとに「面談済み・YES・採用／不採用」を選ぶ。
+   採用が未定の方は、次の日以降の「採用の結果待ち」に出続ける（採用か不採用を選んだ日で記録して外れる）。 */
+function hirePillsHtml(no, hire) {
+  var cur = hire ? hire.type : '';
+  function pill(type, onCls) {
+    return '<button type="button" class="cal-hire text-xs rounded-full px-3 py-0.5 border '
+      + (cur === type ? onCls : 'border-slate-300 text-slate-500 bg-white hover:bg-slate-50')
+      + '" data-no="' + escAttr(no) + '" data-type="' + type + '">' + type + '</button>';
+  }
+  return '<span class="inline-flex gap-1">'
+    + pill('採用', 'bg-violet-700 border-violet-700 text-white font-bold')
+    + pill('不採用', 'bg-gray-500 border-gray-500 text-white font-bold')
+    + '</span>';
+}
 function renderDayPanel() {
   var panel = document.getElementById('calDayPanel');
   var day = state.calDay;
@@ -2019,92 +2031,88 @@ function renderDayPanel() {
   var cal = state.cal || {};
   var list = (cal.days && cal.days[day]) || [];
   var p = day.split('-');
-  var dayLabel = Number(p[1]) + '月' + Number(p[2]) + '日';
-  document.getElementById('calDayTitle').textContent = dayLabel;
-  document.getElementById('calDayTitle2').textContent = dayLabel;
-  document.getElementById('calDayList').innerHTML = list.map(function (c) {
-    return '<label class="flex items-center gap-2 text-sm">'
-      + '<input type="checkbox" class="cal-done" data-no="' + escAttr(c.no) + '"' + (c.done ? ' checked' : '') + '>'
-      + '<span>' + escHtml(c.名前) + '</span>'
-      + (c.ステータス ? '<span class="text-[11px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500">' + escHtml(c.ステータス) + '</span>' : '')
-      + '<span class="text-[11px] text-slate-400">← 面談を実施したらチェック</span>'
-      + '</label>';
-  }).join('') || '<p class="text-sm text-slate-400">この日に面談予定の方はいません。</p>';
-  renderCandList(day);
-  renderNamedSummary(day);
-  var m = (cal.manual && cal.manual[day]) || {};
-  document.getElementById('calYes').value = m.yes ? m.yes : '';
-  document.getElementById('calHire').value = m.hire ? m.hire : '';
-  document.getElementById('calDayMsg').textContent = '';
-}
-document.getElementById('calDayList').addEventListener('change', function (e) {
-  if (!e.target.classList.contains('cal-done')) return;
-  var box = e.target;
-  var no = box.getAttribute('data-no');
-  showOverlay(true);
-  call('setMeetingDone', state.token, no, box.checked, state.calDay).then(function () {
-    return Promise.all([loadCalendar(), loadKpi(), refreshUndo()]);
-  }).catch(function (err) {
-    box.checked = !box.checked;
-    alert('保存に失敗しました：' + errMsg(err));
-  }).then(function () { showOverlay(false); });
-});
+  document.getElementById('calDayTitle').textContent = Number(p[1]) + '月' + Number(p[2]) + '日';
 
-/* YES・採用の候補者一覧：面談した方のうち、まだYESまたは採用になっていない方（月をまたいで残る） */
-function candCellHtml(no, kind, markedDay, day) {
-  if (markedDay === day) {
-    return '<label class="inline-flex items-center gap-1 text-xs"><input type="checkbox" class="cal-cand" data-no="' + escAttr(no) + '" data-kind="' + kind + '" checked>' + kind + '</label>';
-  }
-  if (markedDay) {
-    return '<span class="text-[11px] text-slate-400">' + kind + '済み（' + escHtml(mdDisplay(markedDay)) + '）</span>';
-  }
-  return '<label class="inline-flex items-center gap-1 text-xs"><input type="checkbox" class="cal-cand" data-no="' + escAttr(no) + '" data-kind="' + kind + '">' + kind + 'にする</label>';
-}
-/* この日に名前つきで記録されたYES・採用（候補者リストから外れた＝両方決まった方でも、ここには残り続ける） */
-function renderNamedSummary(day) {
-  var cal = state.cal || {};
-  var n = (cal.named && cal.named[day]) || { yes: [], hire: [] };
-  var parts = [];
-  if (n.yes && n.yes.length) parts.push('YES → ' + n.yes.map(function (x) { return escHtml(x.名前); }).join('、'));
-  if (n.hire && n.hire.length) parts.push('採用 → ' + n.hire.map(function (x) { return escHtml(x.名前); }).join('、'));
-  document.getElementById('calNamedSummary').innerHTML = parts.length ? 'この日の記録：' + parts.join('　／　') : '';
-}
-function renderCandList(day) {
-  var cal = state.cal || {};
-  var cands = cal.candidates || [];
-  document.getElementById('calCandList').innerHTML = cands.map(function (c) {
+  document.getElementById('calDayList').innerHTML = list.map(function (c) {
+    var hireCell;
+    if (!c.done) hireCell = '<span class="text-xs text-slate-300">（面談済みにすると選べます）</span>';
+    else if (!c.yes) hireCell = '<span class="text-xs text-slate-300">（YESの方だけ選べます）</span>';
+    else {
+      hireCell = hirePillsHtml(c.no, c.hire);
+      if (!c.hire) hireCell += '<span class="text-[11px] text-amber-700 ml-2">未定→翌日以降に持ち越し</span>';
+      else if (c.hire.day !== day) hireCell += '<span class="text-[11px] text-slate-400 ml-2">' + escHtml(mdDisplay(c.hire.day)) + 'に決定</span>';
+    }
+    return '<tr class="border-t">'
+      + '<td class="px-2 py-1.5">' + escHtml(c.名前)
+        + (c.ステータス ? ' <span class="text-[11px] px-1.5 py-0.5 rounded-full" style="' + statusStyleAttr_(c.ステータス) + '">' + escHtml(c.ステータス) + '</span>' : '')
+      + '</td>'
+      + '<td class="px-2 py-1.5 text-center"><input type="checkbox" class="cal-done" data-no="' + escAttr(c.no) + '"' + (c.done ? ' checked' : '') + '></td>'
+      + '<td class="px-2 py-1.5 text-center"><input type="checkbox" class="cal-yes" data-no="' + escAttr(c.no) + '"' + (c.yes ? ' checked' : '') + (c.done ? '' : ' disabled') + '></td>'
+      + '<td class="px-2 py-1.5 whitespace-nowrap">' + hireCell + '</td>'
+      + '</tr>';
+  }).join('') || '<tr><td colspan="4" class="px-2 py-3 text-sm text-slate-400">この日に面談予定の方はいません。</td></tr>';
+
+  var todayNos = {};
+  list.forEach(function (c) { todayNos[String(c.no)] = true; });
+  var carry = (cal.pending || []).filter(function (x) {
+    return !todayNos[String(x.no)] && x.doneDay < day && (!x.hire || x.hire.day === day);
+  });
+  document.getElementById('calCarryList').innerHTML = carry.map(function (x) {
     return '<div class="flex items-center flex-wrap gap-3 text-sm py-0.5">'
-      + '<span class="min-w-[6em]">' + escHtml(c.名前) + '</span>'
-      + candCellHtml(c.no, 'YES', c.yes, day)
-      + candCellHtml(c.no, '採用', c.hire, day)
+      + '<span class="min-w-[6em]">' + escHtml(x.名前) + '</span>'
+      + '<span class="text-[11px] text-slate-500">面談 ' + escHtml(mdDisplay(x.doneDay)) + '・YES</span>'
+      + '<span class="ml-auto">' + hirePillsHtml(x.no, x.hire) + '</span>'
       + '</div>';
-  }).join('') || '<p class="text-sm text-slate-400">対象の方はいません。</p>';
+  }).join('') || '<p class="text-sm text-slate-400">結果待ちの方はいません。</p>';
 }
-document.getElementById('calCandList').addEventListener('change', function (e) {
-  if (!e.target.classList.contains('cal-cand')) return;
-  var box = e.target;
-  var no = box.getAttribute('data-no');
-  var kind = box.getAttribute('data-kind');
+/* パネルの中の人（その日の面談の方、または結果待ちの方）を顧客NOで探す */
+function calPerson_(no) {
+  var cal = state.cal || {};
+  var list = (cal.days && cal.days[state.calDay]) || [];
+  var hit = list.filter(function (c) { return String(c.no) === String(no); })[0];
+  if (hit) return hit;
+  return (cal.pending || []).filter(function (c) { return String(c.no) === String(no); })[0] || null;
+}
+function calSave_(fn, args) {
   showOverlay(true);
-  call('setYesHireNamed', state.token, no, kind, box.checked, state.calDay).then(function () {
+  return call.apply(null, [fn, state.token].concat(args)).then(function () {
     return Promise.all([loadCalendar(), loadKpi(), refreshUndo()]);
   }).catch(function (err) {
-    box.checked = !box.checked;
+    renderDayPanel();
     alert('保存に失敗しました：' + errMsg(err));
   }).then(function () { showOverlay(false); });
-});
-function saveDayCounts() {
-  var msg = document.getElementById('calDayMsg');
-  showOverlay(true);
-  call('saveDayCounts', state.token, state.calDay, document.getElementById('calYes').value.trim(), document.getElementById('calHire').value.trim()).then(function () {
-    msg.className = 'text-xs text-green-700';
-    msg.textContent = '保存しました。';
-    return Promise.all([loadCalendar(), loadKpi(), refreshUndo()]);
-  }).catch(function (e) {
-    msg.className = 'text-xs text-red-600';
-    msg.textContent = 'エラー：' + errMsg(e);
-  }).then(function () { showOverlay(false); });
 }
+document.getElementById('calDayPanel').addEventListener('change', function (e) {
+  var box = e.target;
+  var no = box.getAttribute('data-no');
+  if (!no) return;
+  var person = calPerson_(no) || {};
+  if (box.classList.contains('cal-done')) {
+    if (!box.checked && person.yes) {
+      box.checked = true;
+      alert('先にYESのチェックを外してください。');
+      return;
+    }
+    calSave_('setMeetingDone', [no, box.checked, state.calDay]);
+  } else if (box.classList.contains('cal-yes')) {
+    if (!box.checked && person.hire) {
+      box.checked = true;
+      alert('先に採用／不採用の選択を外してください。');
+      return;
+    }
+    calSave_('setYesNamed', [no, box.checked, state.calDay]);
+  }
+});
+document.getElementById('calDayPanel').addEventListener('click', function (e) {
+  var btn = e.target.closest ? e.target.closest('.cal-hire') : null;
+  if (!btn) return;
+  var no = btn.getAttribute('data-no');
+  var type = btn.getAttribute('data-type');
+  var person = calPerson_(no) || {};
+  var cur = person.hire ? person.hire.type : '';
+  var result = cur === type ? '' : (type === '採用' ? 'hire' : 'ng');
+  calSave_('setHireResult', [no, result, state.calDay]);
+});
 
 /* ============================================================
  *  年代・地域の表記ゆれ統一（サーバー側 normalizeAge_/normalizeRegion_ と同じルール）
