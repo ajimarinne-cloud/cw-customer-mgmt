@@ -5,10 +5,59 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>顧客管理システム</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
 <script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          blue:  { 50:'#EAEDF3', 100:'#D7DCE8', 200:'#B9C2D6', 600:'#5B6B8C', 700:'#4A5775' },
+          slate: { 50:'#FBFAF7', 100:'#F2EFE9', 200:'#E6E1D8', 300:'#D8D2C6', 400:'#B9B2A4',
+                   500:'#8A8378', 600:'#6B655B', 700:'#4A453D', 800:'#352F28' }
+        }
+      }
+    }
+  };
+</script>
 <style>
-  body { font-family: -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif; }
-  .dup-row { background-color: #fee2e2 !important; }
+  body { font-family: "Pretendard", -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif; }
+  .dup-row { background-color: #FBEAE8 !important; }
+  .rounded, .rounded-md { border-radius: 10px !important; }
+  .rounded-lg, .rounded-xl { border-radius: 16px !important; }
+  /* 見出し専用の表（スクロールしない）とデータ専用の表（スクロールする）を分けて、
+     見出しがデータ行と重なって見える不具合（position:sticky に起因）を根本的に避ける。
+     2つの表の列幅は、データが描画されるたびに syncHeadWidths() でJSから合わせる。 */
+  .table-head-wrap { overflow: hidden; border-bottom: 1px solid #E6E1D8; }
+  .table-head-wrap table { border-collapse: separate; border-spacing: 0; }
+  .table-body-scroll { max-height: 65vh; overflow: auto; }
+  .table-body-scroll table { border-collapse: separate; border-spacing: 0; }
+  .row-dirty { background-color: #FBF6E8 !important; }
+  .bulk-save-btn:disabled { opacity: .4; cursor: default; }
+  #listView table th, #listView table td,
+  #mineView table th, #mineView table td,
+  #dupView table th, #dupView table td { white-space: nowrap; }
+  #listView .edit-row td, #mineView td.whitespace-normal { white-space: normal; }
+  .field-suffix { display: flex; align-items: stretch; border: 1px solid #E6E1D8; border-radius: 10px; overflow: hidden; background: #fff; }
+  .field-suffix input { border: none; outline: none; padding: 6px 8px; width: 64px; font-size: 13px; background: transparent; }
+  .field-suffix span { padding: 6px 8px; background: #FBFAF7; color: #8A8378; font-size: 12px; display: flex; align-items: center; }
+  .field-err { color: #C9574F; font-size: 11px; margin-top: 2px; }
+  .mini-cal-pop { position: absolute; z-index: 60; background: #fff; border: 1px solid #E6E1D8; border-radius: 10px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.15); padding: 8px; width: 200px; font-size: 11px; }
+  .mini-cal-head { display: flex; align-items: center; justify-content: space-between; font-weight: 700; color: #352F28; margin-bottom: 4px; }
+  .mini-cal-nav { border: none; background: none; cursor: pointer; padding: 2px 6px; color: #4A5775; font-size: 13px; }
+  .mini-cal-wd, .mini-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
+  .mini-cal-wd span { color: #B9B2A4; font-size: 10px; }
+  .mini-cal-grid span[data-date] { cursor: pointer; border-radius: 6px; padding: 2px 0; color: #4A453D; }
+  .mini-cal-grid span[data-date]:hover { background: #F2EFE9; }
+  .mini-cal-grid span.is-sel { background: #5B6B8C; color: #fff; }
+  #appView header .max-w-7xl { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  #appView header .max-w-7xl::-webkit-scrollbar { display: none; }
+  #appView header .max-w-7xl > *, #appView header .max-w-7xl .ml-auto > * { flex-shrink: 0; white-space: nowrap; }
+  @media (max-width: 640px) {
+    main.max-w-7xl { padding: 10px; }
+  }
 </style>
 </head>
 <body class="bg-slate-100 text-slate-800">
@@ -105,8 +154,10 @@
       <div id="batchWrap" class="bg-white rounded-lg shadow-sm hidden">
         <div class="flex flex-wrap items-center justify-between gap-2 p-3 border-b">
           <h3 class="font-bold text-sm">解析結果 <span id="batchCount" class="text-slate-400"></span></h3>
-          <button id="batchSubmitBtn" onclick="submitBatch()"
-            class="bg-blue-600 hover:bg-blue-700 text-white rounded px-5 py-2 text-sm font-medium disabled:opacity-40">登録する</button>
+          <div class="flex items-center gap-2">
+            <span id="batchBulkMsg" class="text-xs"></span>
+            <button id="batchBulkSaveBtn" onclick="batchBulkSave()" disabled class="bulk-save-btn text-xs bg-blue-600 text-white rounded px-3 py-1.5">まとめて保存</button>
+          </div>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
@@ -163,32 +214,64 @@
         </label>
         <div class="ml-auto flex items-center gap-2 self-center">
           <span id="listCount" class="text-xs text-slate-500"></span>
+          <button id="listBulkSaveBtn" onclick="listBulkSave()" disabled class="bulk-save-btn text-xs bg-blue-600 text-white rounded px-3 py-1.5">まとめて保存</button>
           <button onclick="loadCustomers(true)" class="text-xs border rounded px-2 py-1 hover:bg-slate-50">再読込</button>
         </div>
       </div>
+      <p id="listBulkMsg" class="text-xs"></p>
 
-      <div class="bg-white rounded-lg shadow-sm overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead class="bg-slate-50 text-slate-500 text-xs">
-            <tr>
-              <th class="text-left px-3 py-2">NO</th>
-              <th class="text-left px-3 py-2">応募日</th>
-              <th class="text-left px-3 py-2">名前</th>
-              <th class="text-left px-3 py-2">ID</th>
-              <th class="text-left px-3 py-2">媒体</th>
-              <th class="text-left px-3 py-2">案件名</th>
-              <th class="text-left px-3 py-2">担当者</th>
-              <th class="text-left px-3 py-2">アカウント</th>
-              <th class="text-left px-2 py-2">LINE追加</th>
-              <th class="text-left px-2 py-2">ステータス／面談予定日</th>
-              <th class="text-left px-3 py-2">重複</th>
-              <th class="px-2 py-2"></th>
-            </tr>
-          </thead>
-          <tbody id="listBody"></tbody>
-        </table>
+      <div class="bg-white rounded-lg shadow-sm">
+        <div class="table-head-wrap">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-50 text-slate-500 text-xs" id="listHead">
+              <tr>
+                <th class="text-left px-3 py-2">NO</th>
+                <th class="text-left px-3 py-2">応募日</th>
+                <th class="text-left px-3 py-2">名前</th>
+                <th class="text-left px-3 py-2">ID</th>
+                <th class="text-left px-3 py-2">媒体</th>
+                <th class="text-left px-3 py-2">案件名</th>
+                <th class="text-left px-3 py-2">担当者</th>
+                <th class="text-left px-3 py-2">アカウント</th>
+                <th class="text-left px-2 py-2">ステータス／面談予定日</th>
+                <th class="text-left px-3 py-2">重複</th>
+                <th class="px-2 py-2">編集</th>
+              </tr>
+            </thead>
+          </table>
+        </div>
+        <div class="table-body-scroll">
+          <table class="w-full text-sm">
+            <tbody id="listBody"></tbody>
+          </table>
+        </div>
       </div>
-      <p class="text-[11px] text-slate-400">自分が担当した顧客の行では、LINE追加・ステータス・面談予定日を直して「保存」できます。間違えたときは、右上の「元に戻す」で直前の操作を取り消せます。</p>
+      <p class="text-[11px] text-slate-400">自分が担当した顧客の行は、ステータス・面談予定日を直接直せます（LINE追加はステータスの「公式ライン追加」で記録します）。複数行まとめて直してから「まとめて保存」を押してください。名前・ID・年代・地域・案件名・運用アカウントなど他の項目は、右端の「編集」から直せます。間違えたときは、右上の「元に戻す」で直前の操作を1件ずつ取り消せます。</p>
+
+      <div id="listEditPanel" class="hidden bg-white rounded-lg shadow-sm p-4 border-2 border-blue-200">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="font-bold text-sm">編集中：<span id="editPanelName"></span>（NO <span id="editPanelNo"></span>）</h3>
+          <button class="edit-cancel text-xs text-slate-400 hover:text-slate-600">閉じる ×</button>
+        </div>
+        <div class="flex flex-wrap gap-3 items-end">
+          <label class="text-xs text-slate-500">名前<span class="block mt-1"><input data-ef="名前" class="border rounded px-2 py-1.5 text-sm w-28"></span></label>
+          <label class="text-xs text-slate-500">ID<span class="block mt-1"><input data-ef="ID" class="border rounded px-2 py-1.5 text-sm w-32"></span></label>
+          <label class="text-xs text-slate-500">年代<span class="block mt-1"><span class="field-suffix"><input data-ef="年齢" inputmode="numeric"><span>代</span></span></span></label>
+          <label class="text-xs text-slate-500">地域<span class="block mt-1"><input data-ef="地域" class="border rounded px-2 py-1.5 text-sm w-24" placeholder="例 東京"></span></label>
+          <label class="text-xs text-slate-500">案件名<span class="block mt-1"><select data-ef="案件名" class="border rounded px-2 py-1.5 text-sm"></select></span></label>
+          <label class="text-xs text-slate-500">運用アカウント<span class="block mt-1"><select data-ef="運用アカウント" class="border rounded px-2 py-1.5 text-sm"></select></span></label>
+          <label class="text-xs text-slate-500">応募金額<span class="block mt-1"><input data-ef="応募金額" type="number" inputmode="numeric" class="border rounded px-2 py-1.5 text-sm w-24"></span></label>
+          <label class="text-xs text-slate-500">備考<span class="block mt-1"><input data-ef="備考" class="border rounded px-2 py-1.5 text-sm w-40"></span></label>
+          <label class="text-xs text-slate-500">ステータス<span class="block mt-1"><select data-ef="ステータス" class="edit-status border rounded px-2 py-1.5 text-sm"><option value="">（未設定）</option></select></span></label>
+          <label class="text-xs text-slate-500">面談予定日<span class="edit-md-wrap block mt-1 hidden"><span class="inline-flex items-center gap-1"><input data-ef="面談予定日" type="text" inputmode="numeric" placeholder="例 9/30" class="edit-md border rounded px-2 py-1.5 text-sm w-24"><button type="button" class="md-cal-btn border rounded px-1 py-1.5 text-xs" tabindex="-1">📅</button></span></span></label>
+        </div>
+        <div id="editPanelErr" class="field-err"></div>
+        <div class="flex items-center gap-3 mt-3">
+          <button class="edit-save bg-blue-600 hover:bg-blue-700 text-white rounded px-4 py-1.5 text-sm">保存する</button>
+          <button class="edit-cancel border rounded px-4 py-1.5 text-sm">キャンセル</button>
+          <span id="editPanelMsg" class="text-xs"></span>
+        </div>
+      </div>
     </section>
 
     <!-- ---------- 未対応リスト（自分が担当した顧客のうち、対応待ちのみ） ---------- -->
@@ -200,32 +283,39 @@
         </div>
         <div class="ml-auto flex items-center gap-2 self-center">
           <span id="mineCount" class="text-xs text-slate-500"></span>
+          <button id="mineBulkSaveBtn" onclick="mineBulkSave()" disabled class="bulk-save-btn text-xs bg-blue-600 text-white rounded px-3 py-1.5">まとめて保存</button>
           <button onclick="loadMine(true)" class="text-xs border rounded px-2 py-1 hover:bg-slate-50">再読込</button>
         </div>
       </div>
       <p class="text-xs text-slate-500">
         自分が担当した顧客のうち、まだ対応が終わっていない方だけを表示します（重複あり／ステータスが「面談済み」「辞退/ﾌﾞﾛｯｸ」の方は表示されません）。
-        「LINE追加にする」と、ステータスを「面談予約」にした日は、数字管理（LINE追加数・アポ日程切数）に自動記録されます。「面談予約」にするときは面談予定日の入力が必須です。
-        面談したあとのアポ済み・YES・採用は、数字管理タブの「面談カレンダー」で入力します。
+        LINE追加・ステータス・面談予定日を直してから「まとめて保存」を押すと、変更した行だけまとめて反映されます。「面談予約」にするときは面談予定日の入力が必須です。
+        LINE追加・ステータスを変えた日は、数字管理（LINE追加数・アポ日程切数）に自動記録されます。面談したあとのアポ済み・YES・採用は、数字管理タブの「面談カレンダー」で入力します。
       </p>
-      <div class="bg-white rounded-lg shadow-sm overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead class="bg-slate-50 text-slate-500 text-xs">
-            <tr>
-              <th class="text-left px-3 py-2">NO</th>
-              <th class="text-left px-3 py-2">応募日</th>
-              <th class="text-left px-3 py-2">名前</th>
-              <th class="text-left px-3 py-2">ID</th>
-              <th class="text-left px-3 py-2">媒体</th>
-              <th class="text-left px-3 py-2">案件名</th>
-              <th class="text-left px-3 py-2">アカウント</th>
-              <th class="text-left px-2 py-2">LINE追加</th>
-              <th class="text-left px-2 py-2">ステータス／面談予定日</th>
-              <th class="px-2 py-2"></th>
-            </tr>
-          </thead>
-          <tbody id="mineBody"></tbody>
-        </table>
+      <p id="mineBulkMsg" class="text-xs"></p>
+      <div class="bg-white rounded-lg shadow-sm">
+        <div class="table-head-wrap">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-50 text-slate-500 text-xs" id="mineHead">
+              <tr>
+                <th class="text-left px-3 py-2">NO</th>
+                <th class="text-left px-3 py-2">応募日</th>
+                <th class="text-left px-3 py-2">名前</th>
+                <th class="text-left px-3 py-2">ID</th>
+                <th class="text-left px-3 py-2">媒体</th>
+                <th class="text-left px-3 py-2">案件名</th>
+                <th class="text-left px-3 py-2">アカウント</th>
+                <th class="text-left px-2 py-2">LINE追加</th>
+                <th class="text-left px-2 py-2">ステータス／面談予定日</th>
+              </tr>
+            </thead>
+          </table>
+        </div>
+        <div class="table-body-scroll">
+          <table class="w-full text-sm">
+            <tbody id="mineBody"></tbody>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -241,23 +331,29 @@
           <button onclick="loadDup(true)" class="text-xs border rounded px-2 py-1 hover:bg-slate-50">再読込</button>
         </div>
       </div>
-      <div class="bg-white rounded-lg shadow-sm overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead class="bg-slate-50 text-slate-500 text-xs">
-            <tr>
-              <th class="text-left px-3 py-2">NO</th>
-              <th class="text-left px-3 py-2">応募日</th>
-              <th class="text-left px-3 py-2">名前</th>
-              <th class="text-left px-3 py-2">ID</th>
-              <th class="text-left px-3 py-2">媒体</th>
-              <th class="text-left px-3 py-2">案件名</th>
-              <th class="text-left px-3 py-2">担当者</th>
-              <th class="text-left px-3 py-2">アカウント</th>
-              <th class="text-left px-3 py-2">重複元NO</th>
-            </tr>
-          </thead>
-          <tbody id="dupBody"></tbody>
-        </table>
+      <div class="bg-white rounded-lg shadow-sm">
+        <div class="table-head-wrap">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-50 text-slate-500 text-xs" id="dupHead">
+              <tr>
+                <th class="text-left px-3 py-2">NO</th>
+                <th class="text-left px-3 py-2">応募日</th>
+                <th class="text-left px-3 py-2">名前</th>
+                <th class="text-left px-3 py-2">ID</th>
+                <th class="text-left px-3 py-2">媒体</th>
+                <th class="text-left px-3 py-2">案件名</th>
+                <th class="text-left px-3 py-2">担当者</th>
+                <th class="text-left px-3 py-2">アカウント</th>
+                <th class="text-left px-3 py-2">重複元NO</th>
+              </tr>
+            </thead>
+          </table>
+        </div>
+        <div class="table-body-scroll">
+          <table class="w-full text-sm">
+            <tbody id="dupBody"></tbody>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -370,17 +466,25 @@
             <select id="calMonth" class="border rounded px-2 py-1.5 text-sm" onchange="loadCalendar()"></select>
           </div>
         </div>
-        <p class="text-[11px] text-slate-400 mb-2">日付をクリックすると、その日の面談の名前が見えます。「面談実施」にチェックするとアポ済みとして数え、ステータスも「面談済み」になります。YES数・採用数はその日の分を入力して保存します。</p>
+        <p class="text-[11px] text-slate-400 mb-2">日付をクリックすると、その日の面談の名前が見えます。「面談実施」にチェックするとアポ済みとして数え、ステータスも「面談済み」になります。YES・採用は、下の一覧で人を選んで記録できます。</p>
         <div id="calGrid" class="grid grid-cols-7 gap-1 text-xs"></div>
 
         <div id="calDayPanel" class="mt-4 border-t pt-3 hidden">
           <h4 class="font-bold text-sm mb-2"><span id="calDayTitle"></span></h4>
           <div id="calDayList" class="mb-3 space-y-1"></div>
-          <div class="flex flex-wrap items-end gap-3">
-            <label class="text-xs text-slate-500">YES数
+
+          <div class="mt-2">
+            <h5 class="text-xs font-bold text-slate-600 mb-1">YES・採用を記録（面談した方のうち、まだ決まっていない方）</h5>
+            <p class="text-[11px] text-slate-400 mb-1">チェックすると、この日（<span id="calDayTitle2"></span>）のYES・採用として記録します。面談した日が別の日でも、まだYES・採用になっていない方はここに出続けます。</p>
+            <p id="calNamedSummary" class="text-xs text-slate-600 mb-1"></p>
+            <div id="calCandList" class="space-y-1 max-h-48 overflow-y-auto border rounded p-2 bg-slate-50"></div>
+          </div>
+
+          <div class="flex flex-wrap items-end gap-3 mt-3">
+            <label class="text-xs text-slate-500">YES数（人を指定しない分を追加）
               <input id="calYes" type="number" min="0" step="1" class="block w-24 border rounded px-2 py-1.5 text-sm text-slate-800 mt-1">
             </label>
-            <label class="text-xs text-slate-500">採用数
+            <label class="text-xs text-slate-500">採用数（人を指定しない分を追加）
               <input id="calHire" type="number" min="0" step="1" class="block w-24 border rounded px-2 py-1.5 text-sm text-slate-800 mt-1">
             </label>
             <button onclick="saveDayCounts()" class="bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1.5 text-sm">この日の数字を保存</button>
@@ -421,9 +525,12 @@ var state = {
   monthOptions: [],
   mine: [],
   mineMeta: {},
+  mineDirty: {},
+  listDirty: {},
   dup: [],
   dupMeta: {},
   batch: [],           // 解析結果の行
+  batchDirty: {},      // 解析結果：登録済みの行のうち、まだ保存していない変更がある顧客NO
   targetSheetId: '',
   kpi: {},
   cal: {},
@@ -433,7 +540,7 @@ var state = {
 
 var DEFAULT_PROJECT = '投稿作成＋SNS運用';
 var DEFAULT_MEDIA   = 'CW';
-var PASTE_TEMPLATE  = '名前：\nID：\n年代：\n地域：';
+var PASTE_TEMPLATE  = '名前：\nID：\n年代：代\n地域：';
 var listDebounce = null, dupDebounce = null;
 function primaryAccount() { return (state.myAccounts && state.myAccounts[0]) || ''; }
 
@@ -722,8 +829,7 @@ function parseBatch() {
     var id = (b['ID'] || b['Id'] || b['id'] || '').trim();
     if (!name && !id) return;   // 項目名だけで値が無い行はスキップ
 
-    var age = (b['年代'] || b['年齢'] || '').trim();
-    if (age === '代' || age === '歳' || age === '才') age = '';
+    var age = (b['年代'] || b['年齢'] || '').trim().replace(/(代|歳|才)$/, '');
 
     rows.push(newBatchRow({
       名前: name,
@@ -739,6 +845,7 @@ function parseBatch() {
   });
 
   state.batch = rows;
+  state.batchDirty = {};
   markBatchDups();
   renderBatch();
 
@@ -758,6 +865,7 @@ function clearBatch() {
   document.getElementById('parseMsg').textContent = '';
   document.getElementById('batchMsg').textContent = '';
   state.batch = [];
+  state.batchDirty = {};
   renderBatch();
 }
 
@@ -806,6 +914,8 @@ function rowStatus(row) {
   if (row._result && !row._result.ok) return { label: '失敗', cls: 'bg-red-100 text-red-700', ok: true };
   var miss = !String(row.名前).trim() || !String(row.ID).trim() || !row.案件名 || !row.媒体 || !row.運用アカウント;
   if (miss) return { label: '未入力', cls: 'bg-amber-100 text-amber-700', ok: false };
+  if (!normalizeAgeJs_(row.年齢).ok) return { label: '年代エラー', cls: 'bg-red-100 text-red-700', ok: false };
+  if (!normalizeRegionJs_(row.地域).ok) return { label: '地域エラー', cls: 'bg-red-100 text-red-700', ok: false };
   if ((row._dupNos && row._dupNos.length) || row._batchDup) return { label: '重複（登録されます）', cls: 'bg-red-100 text-red-700', ok: true };
   return { label: 'OK', cls: 'bg-emerald-100 text-emerald-700', ok: true };
 }
@@ -822,57 +932,137 @@ function markBatchDups() {
   });
 }
 
+/* 登録済みの行が、登録時点から画面上で変更されているか判定するための値（名前・ID・年代・地域・案件名・媒体・運用アカウント・備考） */
+function batchEditableSnapshot_(row) {
+  return { 名前: row.名前, ID: row.ID, 年齢: row.年齢, 地域: row.地域, 案件名: row.案件名, 媒体: row.媒体, 運用アカウント: row.運用アカウント, 備考: row.備考 || '' };
+}
+function batchSnapshotEqual_(a, b) {
+  return a.名前 === b.名前 && a.ID === b.ID && a.年齢 === b.年齢 && a.地域 === b.地域
+    && a.案件名 === b.案件名 && a.媒体 === b.媒体 && a.運用アカウント === b.運用アカウント && a.備考 === b.備考;
+}
+/* 登録済みの行を直したら、保存していない行として印をつける（顧客一覧・未対応リストと同じ「行をハイライト→まとめて保存」の作り） */
+function recomputeBatchRowDirty(idx) {
+  var row = state.batch[idx];
+  if (!row || !row._result || !row._result.ok) return;
+  var no = row._result.no;
+  var dirty = row._savedSnapshot && !batchSnapshotEqual_(row._savedSnapshot, batchEditableSnapshot_(row));
+  if (dirty) state.batchDirty[no] = true; else delete state.batchDirty[no];
+  var tr = document.querySelector('#batchBody tr[data-idx="' + idx + '"]');
+  if (tr) tr.classList.toggle('row-dirty', dirty);
+  refreshBatchBulkBtn();
+}
+function refreshBatchBulkBtn() {
+  var n = Object.keys(state.batchDirty || {}).length;
+  var b = document.getElementById('batchBulkSaveBtn');
+  if (!b) return;
+  b.disabled = n === 0;
+  b.textContent = n > 0 ? 'まとめて保存（' + n + '）' : 'まとめて保存';
+}
+/* 登録済みの行を、画面で直した内容のまま複数まとめて顧客リストへ保存し直す（新規登録タブから出ずにアカウント名などの直し忘れをまとめて直せるようにする） */
+function batchBulkSave() {
+  var nos = Object.keys(state.batchDirty || {});
+  var msg = document.getElementById('batchBulkMsg');
+  msg.textContent = '';
+  if (!nos.length) return;
+  var items = [], skipped = [];
+  nos.forEach(function (no) {
+    var row = state.batch.filter(function (r) { return r._result && r._result.ok && String(r._result.no) === String(no); })[0];
+    if (!row) return;
+    var ageChk = normalizeAgeJs_(row.年齢);
+    var regionChk = normalizeRegionJs_(row.地域);
+    if (!ageChk.ok || !regionChk.ok) { skipped.push('NO' + no + '（' + (!ageChk.ok ? ageChk.message : regionChk.message) + '）'); return; }
+    var orig = row._savedSnapshot || {};
+    var patch = {};
+    if (row.名前 !== orig.名前) patch.name = row.名前;
+    if (row.ID !== orig.ID) patch.id = row.ID;
+    if (ageChk.value !== normalizeAgeJs_(orig.年齢).value) patch.age = ageChk.value;
+    if (regionChk.value !== normalizeRegionJs_(orig.地域).value) patch.region = regionChk.value;
+    if (row.案件名 !== orig.案件名) patch.project = row.案件名;
+    if (row.媒体 !== orig.媒体) patch.media = row.媒体;
+    if (row.運用アカウント !== orig.運用アカウント) patch.account = row.運用アカウント;
+    if ((row.備考 || '') !== (orig.備考 || '')) patch.note = row.備考 || '';
+    if (Object.keys(patch).length) items.push({ no: no, patch: patch });
+  });
+  if (!items.length) {
+    msg.className = 'text-xs text-red-600';
+    msg.textContent = '保存できる行がありません：' + skipped.join('、');
+    return;
+  }
+  showOverlay(true);
+  call('updateCustomerFieldsBulk', state.token, items).then(function (res) {
+    var okc = 0, fails = [];
+    (res.results || []).forEach(function (r) {
+      var row = state.batch.filter(function (x) { return x._result && x._result.ok && String(x._result.no) === String(r.no); })[0];
+      if (r.ok) {
+        okc++;
+        if (row) { row._savedSnapshot = batchEditableSnapshot_(row); row._result.text = '登録しました（変更を保存しました）'; }
+        delete state.batchDirty[r.no];
+      } else {
+        fails.push('NO' + r.no + '：' + r.message);
+      }
+    });
+    var parts = [];
+    if (okc) parts.push(okc + '件を保存しました。');
+    if (fails.length) parts.push(fails.length + '件は失敗（' + fails.join('／') + '）。');
+    if (skipped.length) parts.push(skipped.length + '件は保存していません（' + skipped.join('、') + '）。');
+    msg.className = 'text-xs ' + (fails.length || skipped.length ? 'text-amber-700' : 'text-green-700');
+    msg.textContent = parts.join(' ');
+    renderBatch();
+    return loadCustomers(false).then(function () { return refreshUndo(); });
+  }).catch(function (e) {
+    msg.className = 'text-xs text-red-600';
+    msg.textContent = '保存に失敗しました：' + errMsg(e);
+  }).then(function () { showOverlay(false); });
+}
+
+/* 1行ぶんの「状態」セルの中身（バッジ＋メッセージ）。renderBatch と refreshStatusBadges の両方から使う。
+   保存していない変更があるかどうかは、行全体のハイライト（row-dirty）と上の「まとめて保存」ボタンで示す。 */
+function batchStatusCellHtml_(row) {
+  var st = rowStatus(row);
+  var note = '';
+  if (row._result) {
+    note = '<div class="text-[11px] mt-0.5 ' + (row._result.ok ? 'text-green-600' : 'text-red-600') + '">' + escHtml(row._result.text) + '</div>';
+  }
+  else if (row._dupNos && row._dupNos.length)
+    note = '<div class="text-[11px] mt-0.5 text-red-600">既存NO:' + escHtml(row._dupNos.join(',')) + '</div>';
+  else if (row._batchDup)
+    note = '<div class="text-[11px] mt-0.5 text-red-600">この中で重複</div>';
+  return '<span class="text-xs px-1.5 py-0.5 rounded ' + st.cls + '">' + st.label + '</span>' + note;
+}
+
 function renderBatch() {
   var b = state.batch;
   document.getElementById('batchWrap').classList.toggle('hidden', b.length === 0);
   document.getElementById('batchCount').textContent = '（' + b.length + '件）';
 
   document.getElementById('batchBody').innerHTML = b.map(function (row, i) {
-    var st = rowStatus(row);
-    var note = '';
-    if (row._result) note = '<div class="text-[11px] mt-0.5 ' + (row._result.ok ? 'text-green-600' : 'text-red-600') + '">' + escHtml(row._result.text) + '</div>';
-    else if (row._dupNos && row._dupNos.length)
-      note = '<div class="text-[11px] mt-0.5 text-red-600">既存NO:' + escHtml(row._dupNos.join(',')) + '</div>';
-    else if (row._batchDup)
-      note = '<div class="text-[11px] mt-0.5 text-red-600">この中で重複</div>';
-
-    return '<tr class="border-t align-top" data-idx="' + i + '">'
-      + '<td class="px-2 py-1.5 whitespace-nowrap"><span class="text-xs px-1.5 py-0.5 rounded ' + st.cls + '">' + st.label + '</span>' + note + '</td>'
+    var dirty = row._result && row._result.ok && state.batchDirty[row._result.no];
+    return '<tr class="border-t align-top' + (dirty ? ' row-dirty' : '') + '" data-idx="' + i + '">'
+      + '<td class="px-2 py-1.5 whitespace-nowrap">' + batchStatusCellHtml_(row) + '</td>'
       + '<td class="px-1 py-1.5"><input data-f="名前" class="border rounded px-1.5 py-1 text-sm w-24" value="' + escAttr(row.名前) + '"></td>'
       + '<td class="px-1 py-1.5"><input data-f="ID" class="border rounded px-1.5 py-1 text-sm w-32" value="' + escAttr(row.ID) + '"></td>'
-      + '<td class="px-1 py-1.5"><input data-f="年齢" class="border rounded px-1.5 py-1 text-sm w-14" value="' + escAttr(row.年齢) + '"></td>'
+      + '<td class="px-1 py-1.5"><span class="field-suffix"><input data-f="年齢" inputmode="numeric" value="' + escAttr(row.年齢) + '"><span>代</span></span></td>'
       + '<td class="px-1 py-1.5"><input data-f="地域" class="border rounded px-1.5 py-1 text-sm w-16" value="' + escAttr(row.地域) + '"></td>'
       + '<td class="px-1 py-1.5"><select data-f="案件名" class="border rounded px-1 py-1 text-sm"><option value="">（選択）</option>' + selOpts(state.options.project, row.案件名) + '</select></td>'
       + '<td class="px-1 py-1.5"><select data-f="媒体" class="border rounded px-1 py-1 text-sm"><option value="">（選択）</option>' + selOpts(state.options.media, row.媒体) + '</select></td>'
       + '<td class="px-1 py-1.5"><select data-f="運用アカウント" class="border rounded px-1 py-1 text-sm">' + acctOptionsHtml(row) + '</select></td>'
       + '<td class="px-1 py-1.5"><input data-f="備考" class="border rounded px-1.5 py-1 text-sm w-24" value="' + escAttr(row.備考 || '') + '"></td>'
-      + '<td class="px-2 py-1.5 whitespace-nowrap"><button data-del="' + i + '" class="text-slate-400 hover:text-red-600 text-xs">削除</button></td>'
+      + '<td class="px-2 py-1.5 whitespace-nowrap">' + (row._result && row._result.ok ? '' : '<button data-del="' + i + '" class="text-slate-400 hover:text-red-600 text-xs">削除</button>') + '</td>'
       + '</tr>';
   }).join('');
-
-  refreshBatchSummary();
+  refreshBatchBulkBtn();
 }
 
-function refreshBatchSummary() {
-  var n = state.batch.filter(function (r) { return rowStatus(r).ok && !(r._result && r._result.ok); }).length;
-  var btn = document.getElementById('batchSubmitBtn');
-  btn.textContent = n > 0 ? n + '件を登録する' : '登録する';
-  btn.disabled = n === 0;
-}
-
-/* 入力中：ステータスバッジだけ更新（フォーカスを保つ） */
+/* 入力中：状態セル（バッジ・保存ボタンなど）だけ更新する（ほかの入力欄のフォーカスを保つため、行全体は作り直さない） */
 function refreshStatusBadges() {
   var trs = document.querySelectorAll('#batchBody tr');
   for (var i = 0; i < trs.length; i++) {
     var idx = Number(trs[i].getAttribute('data-idx'));
     var row = state.batch[idx];
     if (!row) continue;
-    var st = rowStatus(row);
     var cell = trs[i].querySelector('td:first-child');
-    var span = cell ? cell.querySelector('span') : null;
-    if (span) { span.textContent = st.label; span.className = 'text-xs px-1.5 py-0.5 rounded ' + st.cls; }
+    if (cell) cell.innerHTML = batchStatusCellHtml_(row);
   }
-  refreshBatchSummary();
 }
 
 /* テーブル編集イベント（委譲） */
@@ -880,7 +1070,13 @@ document.getElementById('batchBody').addEventListener('input', onBatchEdit);
 document.getElementById('batchBody').addEventListener('change', onBatchEdit);
 document.getElementById('batchBody').addEventListener('click', function (e) {
   var d = e.target.getAttribute && e.target.getAttribute('data-del');
-  if (d != null) { state.batch.splice(Number(d), 1); markBatchDups(); renderBatch(); }
+  if (d != null) {
+    var removed = state.batch[Number(d)];
+    if (removed && removed._result && removed._result.ok) delete state.batchDirty[removed._result.no];
+    state.batch.splice(Number(d), 1);
+    markBatchDups();
+    renderBatch();
+  }
 });
 function onBatchEdit(e) {
   var el = e.target;
@@ -892,6 +1088,7 @@ function onBatchEdit(e) {
   state.batch[idx][f] = el.value;
   if (f === 'ID') { markBatchDups(); scheduleDupCheck(); }
   refreshStatusBadges();
+  recomputeBatchRowDirty(idx);
 }
 
 /* ============================================================
@@ -927,7 +1124,7 @@ function submitBatch() {
     if (r._result && r._result.ok) return;         // 登録済みは送らない
     if (!rowStatus(r).ok) return;                  // 未入力は送らない（重複はOK扱いで送る）
     toSend.push({
-      名前: r.名前, ID: r.ID, 年齢: r.年齢, 地域: r.地域, 応募金額: r.応募金額,
+      名前: r.名前, ID: r.ID, 年齢: normalizeAgeJs_(r.年齢).value, 地域: normalizeRegionJs_(r.地域).value, 応募金額: r.応募金額,
       案件名: r.案件名, 媒体: r.媒体, 運用アカウント: r.運用アカウント,
       LINE追加: false, 備考: r.備考 || ''
     });
@@ -950,6 +1147,7 @@ function submitBatch() {
           ok: true, no: rr.no,
           text: rr.dup ? '登録しました（ID重複／既存NO:' + rr.dupNos.join(',') + '）' : '登録しました'
         };
+        state.batch[bi]._savedSnapshot = batchEditableSnapshot_(state.batch[bi]);
       } else {
         state.batch[bi]._result = { ok: false, text: rr.message || 'エラー' };
       }
@@ -998,7 +1196,7 @@ function loadCustomers(showLoad) {
   if (showLoad) showOverlay(true);
   document.getElementById('listCount').textContent = '読み込み中…';
   document.getElementById('listBody').innerHTML =
-    '<tr><td colspan="12" class="px-3 py-6 text-center text-slate-400 text-sm">読み込み中…</td></tr>';
+    '<tr><td colspan="11" class="px-3 py-6 text-center text-slate-400 text-sm">読み込み中…</td></tr>';
   return call('getCustomers', state.token, opts).then(function (res) {
     state.customers = res.rows || [];
     state.listMeta = res || {};
@@ -1006,7 +1204,7 @@ function loadCustomers(showLoad) {
   }).catch(function (e) {
     document.getElementById('listCount').textContent = '';
     document.getElementById('listBody').innerHTML =
-      '<tr><td colspan="12" class="px-3 py-4 text-red-600 text-sm">読み込みエラー：' + escHtml(errMsg(e)) + '</td></tr>';
+      '<tr><td colspan="11" class="px-3 py-4 text-red-600 text-sm">読み込みエラー：' + escHtml(errMsg(e)) + '</td></tr>';
   }).then(function () { if (showLoad) showOverlay(false); });
 }
 
@@ -1022,66 +1220,235 @@ function renderList() {
     label = '最新 ' + rows.length + ' 件を表示　全 ' + (m.scanned || 0) + ' 行（対象月を選ぶと古い順に絞り込めます）';
   }
   document.getElementById('listCount').textContent = label;
+  state.listDirty = {};
 
   var me = String((state.user && state.user.表示担当者名) || '').trim();
   document.getElementById('listBody').innerHTML = rows.map(function (c) {
     var isDup = String(c.重複 || '').indexOf('重複') >= 0;
     var own = !!me && String(c.担当者 || '').trim() === me;
-    var lineCell, statusCell, saveCell;
+    var statusCell, editCell;
     if (own) {
       var showDate = c.ステータス === '面談予約';
-      lineCell = '<td class="px-2 py-2"><input type="checkbox" class="list-line" data-orig="' + (c.LINE追加 ? '1' : '0') + '"' + (c.LINE追加 ? ' checked' : '') + '></td>';
       statusCell = '<td class="px-2 py-2">'
-        + '<select class="list-status border rounded px-1 py-1 text-sm" data-orig="' + escAttr(c.ステータス || '') + '"><option value="">（未設定）</option>' + selOpts(state.options.status, c.ステータス) + '</select>'
-        + '<input type="text" inputmode="numeric" placeholder="面談日 例 9/30" class="list-md border rounded px-1 py-1 text-sm mt-1 block w-28' + (showDate ? '' : ' hidden') + '" value="' + escAttr(mdDisplay(c.面談予定日)) + '">'
+        + '<select class="list-status border rounded px-1 py-1 text-sm" data-orig="' + escAttr(c.ステータス || '') + '" style="' + statusStyleAttr_(c.ステータス) + '"><option value="">（未設定）</option>' + selOpts(state.options.status, c.ステータス) + '</select>'
+        + '<span class="list-md-wrap inline-flex items-center gap-1 mt-1' + (showDate ? '' : ' hidden') + '">'
+        + '<input type="text" inputmode="numeric" placeholder="面談日 例 9/30" class="list-md border rounded px-1 py-1 text-sm w-24" value="' + escAttr(mdDisplay(c.面談予定日)) + '">'
+        + '<button type="button" class="md-cal-btn border rounded px-1 py-1 text-xs" tabindex="-1">📅</button>'
+        + '</span>'
         + '</td>';
-      saveCell = '<td class="px-2 py-2"><button class="list-save bg-blue-600 hover:bg-blue-700 text-white rounded px-2 py-1 text-xs">保存</button></td>';
+      editCell = '<td class="px-2 py-2"><button class="list-edit-btn text-xs border rounded px-2 py-1 hover:bg-slate-50" data-no="' + escAttr(c.no) + '">編集</button></td>';
     } else {
-      lineCell = '<td class="px-2 py-2">' + (c.LINE追加 ? '<span class="inline-block px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-xs">追加済み</span>' : '') + '</td>';
-      statusCell = '<td class="px-2 py-2">' + (c.ステータス ? '<span class="inline-block px-2 py-0.5 rounded-full bg-slate-100 text-xs">' + escHtml(c.ステータス) + '</span>' : '') + '</td>';
-      saveCell = '<td></td>';
+      statusCell = '<td class="px-2 py-2">'
+        + (c.ステータス ? '<span class="inline-block px-2 py-0.5 rounded-full text-xs" style="' + statusStyleAttr_(c.ステータス) + '">' + escHtml(c.ステータス) + '</span>' : '')
+        + (c.面談予定日 ? '<div class="text-[11px] text-slate-400 mt-0.5">面談日 ' + escHtml(mdDisplay(c.面談予定日)) + '</div>' : '')
+        + '</td>';
+      editCell = '<td></td>';
     }
     return '<tr class="border-t hover:bg-slate-50 ' + (isDup ? 'dup-row' : '') + '" data-no="' + escAttr(c.no) + '">'
       + td(c.no) + td(c.応募日) + td(c.名前) + td(c.ID) + td(c.媒体) + td(c.案件名) + td(c.担当者) + td(c.運用アカウント)
-      + lineCell + statusCell
+      + statusCell
       + '<td class="px-3 py-2 text-red-600 text-xs">' + (isDup ? '重複あり' + (c.重複元NO ? '（元:' + escHtml(c.重複元NO) + '）' : '') : '') + '</td>'
-      + saveCell
+      + editCell
       + '</tr>';
-  }).join('') || '<tr><td colspan="12" class="px-3 py-4 text-slate-400 text-sm">該当する顧客がありません。</td></tr>';
+  }).join('') || '<tr><td colspan="11" class="px-3 py-4 text-slate-400 text-sm">該当する顧客がありません。</td></tr>';
+  refreshListBulkBtn();
+  closeEditPanel();
+  syncHeadWidths('listHead', 'listBody');
 }
-/* 顧客一覧：自分の担当行の編集（LINE追加・ステータス・面談予定日） */
-document.getElementById('listBody').addEventListener('change', function (e) {
-  if (!e.target.classList.contains('list-status')) return;
-  e.target.closest('tr').querySelector('.list-md').classList.toggle('hidden', e.target.value !== '面談予約');
-});
-document.getElementById('listBody').addEventListener('click', function (e) {
-  if (!e.target.classList.contains('list-save')) return;
-  var tr = e.target.closest('tr');
+/* その行が、読み込んだ元の値から変わっているか判定する（顧客一覧のクイック編集用） */
+function recomputeListRowDirty(tr) {
   var no = tr.getAttribute('data-no');
-  var lineBox = tr.querySelector('.list-line');
-  var sel = tr.querySelector('.list-status');
-  var status = sel.value;
-  var md = parseMeetingDate(tr.querySelector('.list-md').value);
-  var patch = {};
-  var changed = false;
-  if ((lineBox.checked ? '1' : '0') !== lineBox.getAttribute('data-orig')) { patch.line = lineBox.checked; changed = true; }
-  if (status !== sel.getAttribute('data-orig')) { patch.status = status; changed = true; }
-  if (status === '面談予約') {
-    if (!md) { alert('「面談予約」にするときは、面談予定日を「9/30」のように入力してください。'); return; }
-    patch.md = md;
-    if (md !== String(((state.customers || []).filter(function (c) { return String(c.no) === String(no); })[0] || {}).面談予定日 || '')) changed = true;
+  var orig = (state.customers || []).filter(function (c) { return String(c.no) === String(no); })[0] || {};
+  var status = tr.querySelector('.list-status').value;
+  var statusDiff = status !== (orig.ステータス || '');
+  var mdDiff = status === '面談予約' && mdDisplay(orig.面談予定日) !== tr.querySelector('.list-md').value.trim();
+  var dirty = statusDiff || mdDiff;
+  if (dirty) state.listDirty[no] = true; else delete state.listDirty[no];
+  tr.classList.toggle('row-dirty', dirty);
+  refreshListBulkBtn();
+}
+function refreshListBulkBtn() {
+  var n = Object.keys(state.listDirty || {}).length;
+  var b = document.getElementById('listBulkSaveBtn');
+  b.disabled = n === 0;
+  b.textContent = n > 0 ? 'まとめて保存（' + n + '）' : 'まとめて保存';
+}
+function listBulkSave() {
+  var nos = Object.keys(state.listDirty || {});
+  var msg = document.getElementById('listBulkMsg');
+  msg.textContent = '';
+  if (!nos.length) return;
+  var items = [], skipped = [];
+  nos.forEach(function (no) {
+    var tr = document.querySelector('#listBody tr[data-no="' + no + '"]');
+    if (!tr) return;
+    var status = tr.querySelector('.list-status').value;
+    var patch = { status: status };
+    if (status === '面談予約') {
+      var md = parseMeetingDate(tr.querySelector('.list-md').value);
+      if (!md) { skipped.push(no + '（面談予定日が未入力）'); return; }
+      patch.md = md;
+    }
+    items.push({ no: no, patch: patch });
+  });
+  if (!items.length) {
+    msg.className = 'text-xs text-red-600';
+    msg.textContent = '保存できる行がありません：' + skipped.join('、');
+    return;
   }
-  if (!changed) { alert('変更がありません。'); return; }
+  showOverlay(true);
+  call('updateCustomerFieldsBulk', state.token, items).then(function (res) {
+    var okc = (res.results || []).filter(function (r) { return r.ok; }).length;
+    var fails = (res.results || []).filter(function (r) { return !r.ok; });
+    var parts = [];
+    if (okc) parts.push(okc + '件を保存しました。');
+    if (fails.length) parts.push(fails.length + '件は失敗（' + fails.map(function (f) { return 'NO' + f.no + '：' + f.message; }).join('／') + '）。');
+    if (skipped.length) parts.push(skipped.length + '件は未入力のため保存していません（' + skipped.join('、') + '）。');
+    msg.className = 'text-xs ' + (fails.length || skipped.length ? 'text-amber-700' : 'text-green-700');
+    msg.textContent = parts.join(' ');
+    return loadCustomers(false).then(function () { return refreshUndo(); }).then(function () { loadMine(false); });
+  }).catch(function (e) {
+    msg.className = 'text-xs text-red-600';
+    msg.textContent = '保存に失敗しました：' + errMsg(e);
+  }).then(function () { showOverlay(false); });
+}
+function td(v) { return '<td class="px-3 py-2">' + escHtml(v == null ? '' : String(v)) + '</td>'; }
+
+/* 見出し専用の表（固定表示）の各列幅を、データ側の表の1行目に合わせる。
+   表の見出しとデータが重なって見える不具合を避けるため、position:sticky を使わず
+   表を2つに分けたので、列幅はこの関数でJSから揃える（データが変わるたび呼び出す）。 */
+function syncHeadWidths(headId, bodyId) {
+  var headRow = document.querySelector('#' + headId + ' tr');
+  if (!headRow) return;
+  var bodyTbody = document.getElementById(bodyId);
+  var firstRow = bodyTbody && bodyTbody.querySelector('tr');
+  var headCells = headRow.children;
+  if (!firstRow || !firstRow.children.length) {
+    for (var i = 0; i < headCells.length; i++) headCells[i].style.width = '';
+    return;
+  }
+  var bodyCells = firstRow.children;
+  for (var j = 0; j < headCells.length && j < bodyCells.length; j++) {
+    headCells[j].style.width = bodyCells[j].getBoundingClientRect().width + 'px';
+  }
+}
+var headSyncResizeDebounce = null;
+window.addEventListener('resize', function () {
+  clearTimeout(headSyncResizeDebounce);
+  headSyncResizeDebounce = setTimeout(function () {
+    syncHeadWidths('listHead', 'listBody');
+    syncHeadWidths('mineHead', 'mineBody');
+    syncHeadWidths('dupHead', 'dupBody');
+  }, 150);
+});
+
+/* ============================================================
+ *  顧客一覧：自分の担当行の編集パネル（登録内容を保存後に直せるようにする）
+ *   表とは別の、画面幅ぶん使える1枚の編集パネルを使う（横に長い表の中に置くと
+ *   携帯でフォームが横スクロール必須になってしまうため、表の外に出す）。
+ *   一度に編集できるのは1件（「編集」を押すたびに、その顧客の内容に差し替わる）。
+ * ============================================================ */
+function openEditPanel(no) {
+  var c = (state.customers || []).filter(function (x) { return String(x.no) === String(no); })[0];
+  if (!c) return;
+  var panel = document.getElementById('listEditPanel');
+  panel.dataset.no = no;
+  document.getElementById('editPanelNo').textContent = no;
+  document.getElementById('editPanelName').textContent = c.名前;
+  document.getElementById('editPanelErr').textContent = '';
+  document.getElementById('editPanelMsg').textContent = '';
+  var val = function (f, v) { panel.querySelector('[data-ef="' + f + '"]').value = v || ''; };
+  val('名前', c.名前); val('ID', c.ID); val('年齢', c.年齢); val('地域', c.地域);
+  val('応募金額', c.応募金額); val('備考', c.備考);
+
+  var projSel = panel.querySelector('[data-ef="案件名"]');
+  projSel.innerHTML = selOpts(state.options.project, c.案件名);
+  var acctSel = panel.querySelector('[data-ef="運用アカウント"]');
+  acctSel.innerHTML = selOpts(uniq((state.myAccounts || []).concat(c.運用アカウント ? [c.運用アカウント] : [])), c.運用アカウント);
+  var statusSel = panel.querySelector('[data-ef="ステータス"]');
+  statusSel.innerHTML = '<option value="">（未設定）</option>' + selOpts(state.options.status, c.ステータス);
+  applyStatusSelectColor_(statusSel);
+  var mdInput = panel.querySelector('[data-ef="面談予定日"]');
+  mdInput.value = mdDisplay(c.面談予定日);
+  panel.querySelector('.edit-md-wrap').classList.toggle('hidden', c.ステータス !== '面談予約');
+
+  panel.classList.remove('hidden');
+  try { panel.scrollIntoView({ block: 'nearest' }); } catch (e) {}
+}
+function closeEditPanel() {
+  var panel = document.getElementById('listEditPanel');
+  panel.classList.add('hidden');
+  delete panel.dataset.no;
+}
+document.getElementById('listBody').addEventListener('click', function (e) {
+  var editBtn = e.target.closest ? e.target.closest('.list-edit-btn') : null;
+  if (editBtn) openEditPanel(editBtn.getAttribute('data-no'));
+});
+document.getElementById('listBody').addEventListener('change', function (e) {
+  var tr = e.target.closest('tr');
+  if (!tr) return;
+  if (e.target.classList.contains('list-status')) {
+    tr.querySelector('.list-md-wrap').classList.toggle('hidden', e.target.value !== '面談予約');
+    applyStatusSelectColor_(e.target);
+    recomputeListRowDirty(tr);
+  }
+});
+document.getElementById('listBody').addEventListener('input', function (e) {
+  if (!e.target.classList.contains('list-md')) return;
+  recomputeListRowDirty(e.target.closest('tr'));
+});
+document.getElementById('listEditPanel').addEventListener('click', function (e) {
+  if (e.target.closest('.edit-cancel')) { closeEditPanel(); return; }
+  if (e.target.closest('.edit-save')) { saveEditPanel(); return; }
+});
+document.getElementById('listEditPanel').addEventListener('change', function (e) {
+  if (!e.target.classList.contains('edit-status')) return;
+  document.querySelector('#listEditPanel .edit-md-wrap').classList.toggle('hidden', e.target.value !== '面談予約');
+  applyStatusSelectColor_(e.target);
+});
+
+function saveEditPanel() {
+  var panel = document.getElementById('listEditPanel');
+  var no = panel.dataset.no;
+  var errBox = document.getElementById('editPanelErr');
+  var msg = document.getElementById('editPanelMsg');
+  errBox.textContent = ''; msg.textContent = '';
+
+  var orig = (state.customers || []).filter(function (c) { return String(c.no) === String(no); })[0] || {};
+  var val = function (f) { return panel.querySelector('[data-ef="' + f + '"]').value; };
+
+  var ageChk = normalizeAgeJs_(val('年齢'));
+  if (!ageChk.ok) { errBox.textContent = ageChk.message; return; }
+  var regionChk = normalizeRegionJs_(val('地域'));
+  if (!regionChk.ok) { errBox.textContent = regionChk.message; return; }
+
+  var status = val('ステータス');
+  var md = status === '面談予約' ? parseMeetingDate(val('面談予定日')) : '';
+  if (status === '面談予約' && !md) { errBox.textContent = '「面談予約」にするときは、面談予定日を「9/30」のように入力してください。'; return; }
+
+  var patch = {};
+  if (val('名前') !== orig.名前) patch.name = val('名前');
+  if (val('ID') !== orig.ID) patch.id = val('ID');
+  if (ageChk.value !== String(orig.年齢 || '')) patch.age = ageChk.value;
+  if (regionChk.value !== String(orig.地域 || '')) patch.region = regionChk.value;
+  if (val('案件名') !== orig.案件名) patch.project = val('案件名');
+  if (val('運用アカウント') !== orig.運用アカウント) patch.account = val('運用アカウント');
+  if (val('応募金額') !== String(orig.応募金額 || '')) patch.amount = val('応募金額');
+  if (val('備考') !== (orig.備考 || '')) patch.note = val('備考');
+  if (status !== (orig.ステータス || '')) patch.status = status;
+  if (status === '面談予約' && md !== String(orig.面談予定日 || '')) patch.md = md;
+
+  if (!Object.keys(patch).length) { errBox.textContent = '変更がありません。'; return; }
+
   showOverlay(true);
   call('updateCustomerFields', state.token, no, patch).then(function () {
     return loadCustomers(false);
   }).then(function () {
     return refreshUndo();
   }).catch(function (err) {
-    alert('保存に失敗しました：' + errMsg(err));
+    errBox.textContent = '保存に失敗しました：' + errMsg(err);
   }).then(function () { showOverlay(false); });
-});
-function td(v) { return '<td class="px-3 py-2">' + escHtml(v == null ? '' : String(v)) + '</td>'; }
+}
 
 /* ============================================================
  *  未対応リスト（自分が担当した顧客のうち、対応待ちのみ）
@@ -1097,35 +1464,111 @@ function loadMine(showLoad) {
   if (showLoad) showOverlay(true);
   document.getElementById('mineCount').textContent = '読み込み中…';
   document.getElementById('mineBody').innerHTML =
-    '<tr><td colspan="10" class="px-3 py-6 text-center text-slate-400 text-sm">読み込み中…</td></tr>';
+    '<tr><td colspan="9" class="px-3 py-6 text-center text-slate-400 text-sm">読み込み中…</td></tr>';
   return call('getCustomers', state.token, { mode: 'mine', query: { word: word }, limit: 500 }).then(function (res) {
     state.mine = res.rows || [];
     state.mineMeta = res || {};
+    state.mineDirty = {};
     renderMine();
   }).catch(function (e) {
     document.getElementById('mineCount').textContent = '';
     document.getElementById('mineBody').innerHTML =
-      '<tr><td colspan="10" class="px-3 py-4 text-red-600 text-sm">読み込みエラー：' + escHtml(errMsg(e)) + '</td></tr>';
+      '<tr><td colspan="9" class="px-3 py-4 text-red-600 text-sm">読み込みエラー：' + escHtml(errMsg(e)) + '</td></tr>';
   }).then(function () { if (showLoad) showOverlay(false); });
 }
 function renderMine() {
   var rows = state.mine || [];
   document.getElementById('mineCount').textContent = '未対応 ' + rows.length + ' 件（古い順）';
   document.getElementById('mineBody').innerHTML = rows.map(function (c) {
-    var lineCell = c.LINE追加
-      ? '<span class="inline-block px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-xs">追加済み</span>'
-      : '<button class="line-btn text-xs border rounded px-2 py-1 hover:bg-slate-50" data-no="' + escAttr(c.no) + '">LINE追加にする</button>';
     var showDate = c.ステータス === '面談予約';
     return '<tr class="border-t hover:bg-slate-50" data-no="' + escAttr(c.no) + '">'
       + td(c.no) + td(c.応募日) + td(c.名前) + td(c.ID) + td(c.媒体) + td(c.案件名) + td(c.運用アカウント)
-      + '<td class="px-2 py-1.5 whitespace-nowrap">' + lineCell + '</td>'
+      + '<td class="px-2 py-1.5 whitespace-nowrap">'
+        + '<span class="inline-flex items-center gap-1.5 text-xs"><input type="checkbox" class="mine-line" data-orig="' + (c.LINE追加 ? '1' : '0') + '"' + (c.LINE追加 ? ' checked' : '') + '><span>LINE追加</span></span>'
+        + '<span class="mine-line-md-wrap inline-flex items-center gap-1 mt-1 hidden">'
+        + '<input type="text" inputmode="numeric" placeholder="追加日 例 9/30" class="mine-line-md border rounded px-1 py-1 text-sm w-24">'
+        + '<button type="button" class="md-cal-btn border rounded px-1 py-1 text-xs" tabindex="-1">📅</button>'
+        + '</span>'
+        + '</td>'
       + '<td class="px-2 py-1.5">'
-        + '<select class="mine-status border rounded px-1 py-1 text-sm"><option value="">（未設定）</option>' + selOpts(state.options.status, c.ステータス) + '</select>'
-        + '<input type="text" inputmode="numeric" placeholder="面談日 例 9/30" class="mine-meeting-date border rounded px-1 py-1 text-sm mt-1 block w-28' + (showDate ? '' : ' hidden') + '" value="' + escAttr(mdDisplay(c.面談予定日)) + '">'
+        + '<select class="mine-status border rounded px-1 py-1 text-sm" data-orig="' + escAttr(c.ステータス || '') + '" style="' + statusStyleAttr_(c.ステータス) + '"><option value="">（未設定）</option>' + selOpts(state.options.status, c.ステータス) + '</select>'
+        + '<span class="mine-md-wrap inline-flex items-center gap-1 mt-1' + (showDate ? '' : ' hidden') + '">'
+        + '<input type="text" inputmode="numeric" placeholder="面談日 例 9/30" class="mine-meeting-date border rounded px-1 py-1 text-sm w-24" value="' + escAttr(mdDisplay(c.面談予定日)) + '">'
+        + '<button type="button" class="md-cal-btn border rounded px-1 py-1 text-xs" tabindex="-1">📅</button>'
+        + '</span>'
       + '</td>'
-      + '<td class="px-2 py-1.5"><button class="mine-save bg-blue-600 hover:bg-blue-700 text-white rounded px-2 py-1 text-xs">保存</button></td>'
       + '</tr>';
-  }).join('') || '<tr><td colspan="10" class="px-3 py-4 text-slate-400 text-sm">未対応の顧客はありません。</td></tr>';
+  }).join('') || '<tr><td colspan="9" class="px-3 py-4 text-slate-400 text-sm">未対応の顧客はありません。</td></tr>';
+  refreshMineBulkBtn();
+  syncHeadWidths('mineHead', 'mineBody');
+}
+/* その行が、読み込んだ元の値から変わっているか判定する */
+function recomputeMineRowDirty(tr) {
+  var no = tr.getAttribute('data-no');
+  var orig = (state.mine || []).filter(function (c) { return String(c.no) === String(no); })[0] || {};
+  var lineChecked = tr.querySelector('.mine-line').checked;
+  var status = tr.querySelector('.mine-status').value;
+  var lineDiff = lineChecked !== !!orig.LINE追加;
+  var statusDiff = status !== (orig.ステータス || '');
+  var mdDiff = status === '面談予約' && mdDisplay(orig.面談予定日) !== tr.querySelector('.mine-meeting-date').value.trim();
+  var dirty = lineDiff || statusDiff || mdDiff;
+  if (dirty) state.mineDirty[no] = true; else delete state.mineDirty[no];
+  tr.classList.toggle('row-dirty', dirty);
+  refreshMineBulkBtn();
+}
+function refreshMineBulkBtn() {
+  var n = Object.keys(state.mineDirty || {}).length;
+  var b = document.getElementById('mineBulkSaveBtn');
+  b.disabled = n === 0;
+  b.textContent = n > 0 ? 'まとめて保存（' + n + '）' : 'まとめて保存';
+}
+function mineBulkSave() {
+  var nos = Object.keys(state.mineDirty || {});
+  var msg = document.getElementById('mineBulkMsg');
+  msg.textContent = '';
+  if (!nos.length) return;
+  var items = [], skipped = [];
+  nos.forEach(function (no) {
+    var tr = document.querySelector('#mineBody tr[data-no="' + no + '"]');
+    if (!tr) return;
+    var status = tr.querySelector('.mine-status').value;
+    var lineChecked = tr.querySelector('.mine-line').checked;
+    var patch = { line: lineChecked, status: status };
+    if (status === '面談予約') {
+      var md = parseMeetingDate(tr.querySelector('.mine-meeting-date').value);
+      if (!md) { skipped.push(no + '（面談予定日が未入力）'); return; }
+      patch.md = md;
+    }
+    if (lineChecked) {
+      var lineDateRaw = tr.querySelector('.mine-line-md').value.trim();
+      if (lineDateRaw) {
+        var ld = parseMeetingDate(lineDateRaw);
+        if (!ld) { skipped.push(no + '（LINE追加日の形式が正しくありません）'); return; }
+        patch.lineDate = ld;
+      }
+    }
+    items.push({ no: no, patch: patch });
+  });
+  if (!items.length) {
+    msg.className = 'text-xs text-red-600';
+    msg.textContent = '保存できる行がありません：' + skipped.join('、');
+    return;
+  }
+  showOverlay(true);
+  call('updateCustomerFieldsBulk', state.token, items).then(function (res) {
+    var okc = (res.results || []).filter(function (r) { return r.ok; }).length;
+    var fails = (res.results || []).filter(function (r) { return !r.ok; });
+    var parts = [];
+    if (okc) parts.push(okc + '件を保存しました。');
+    if (fails.length) parts.push(fails.length + '件は失敗（' + fails.map(function (f) { return 'NO' + f.no + '：' + f.message; }).join('／') + '）。');
+    if (skipped.length) parts.push(skipped.length + '件は未入力のため保存していません（' + skipped.join('、') + '）。');
+    msg.className = 'text-xs ' + (fails.length || skipped.length ? 'text-amber-700' : 'text-green-700');
+    msg.textContent = parts.join(' ');
+    return loadMine(false).then(function () { return refreshUndo(); }).then(function () { loadCustomers(false); });
+  }).catch(function (e) {
+    msg.className = 'text-xs text-red-600';
+    msg.textContent = '保存に失敗しました：' + errMsg(e);
+  }).then(function () { showOverlay(false); });
 }
 /* 面談予定日は年を出さずに「9/30」と表示・入力する（年は自動で補う） */
 function mdDisplay(ymd) {
@@ -1150,42 +1593,114 @@ function parseMeetingDate(text) {
   if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return '';
   return y + '-' + ('0' + mo).slice(-2) + '-' + ('0' + d).slice(-2);
 }
-document.getElementById('mineBody').addEventListener('change', function (e) {
-  if (!e.target.classList.contains('mine-status')) return;
-  var tr = e.target.closest('tr');
-  tr.querySelector('.mine-meeting-date').classList.toggle('hidden', e.target.value !== '面談予約');
-});
-document.getElementById('mineBody').addEventListener('click', function (e) {
-  var lineBtn = e.target.closest ? e.target.closest('.line-btn') : null;
-  if (lineBtn) {
-    var lineNo = lineBtn.getAttribute('data-no');
-    showOverlay(true);
-    call('markLineAdded', state.token, lineNo).then(function () {
-      loadMine(false);
-      refreshUndo();
-    }).catch(function (e) {
-      alert('失敗しました：' + errMsg(e));
-    }).then(function () { showOverlay(false); });
+
+/* ============================================================
+ *  ステータスの色分け（顧客一覧・未対応リスト・編集パネル共通）
+ * ============================================================ */
+var STATUS_COLOR = {
+  '垢バン/否認': { bg: '#E5E7EB', fg: '#374151' },
+  '辞退/ﾌﾞﾛｯｸ': { bg: '#E5E7EB', fg: '#374151' },
+  '公式ライン追加': { bg: '#D1FAE5', fg: '#065F46' },
+  '面談予約': { bg: '#FFEDD5', fg: '#9A3412' },
+  '面談済み': { bg: '#1E40AF', fg: '#FFFFFF' },
+  '対応不可': { bg: '#B91C1C', fg: '#FFFFFF' }
+};
+function statusStyleAttr_(status) {
+  var c = STATUS_COLOR[status];
+  return c ? ('background-color:' + c.bg + ';color:' + c.fg + ';') : '';
+}
+function applyStatusSelectColor_(sel) {
+  var c = STATUS_COLOR[sel.value];
+  sel.style.backgroundColor = c ? c.bg : '';
+  sel.style.color = c ? c.fg : '';
+}
+
+/* ============================================================
+ *  面談予定日：📅ボタンから小さいカレンダーを出して日付を選べるようにする
+ *  （今までどおり直接「9/30」と入力することもできる。選んだら対象の入力欄に反映する）
+ * ============================================================ */
+var miniCal = { el: null };
+function closeMiniCal() {
+  if (miniCal.el) { miniCal.el.remove(); miniCal.el = null; }
+}
+function openMiniCal(btn, input) {
+  closeMiniCal();
+  var base = parseMeetingDate(input.value);
+  var now = new Date();
+  var y = now.getFullYear(), mo = now.getMonth();
+  if (base) { var p = base.split('-'); y = Number(p[0]); mo = Number(p[1]) - 1; }
+  var pop = document.createElement('div');
+  pop.className = 'mini-cal-pop';
+  document.body.appendChild(pop);
+  miniCal.el = pop;
+  function render() {
+    var first = new Date(y, mo, 1);
+    var startWd = first.getDay();
+    var daysInMonth = new Date(y, mo + 1, 0).getDate();
+    var selYmd = base || '';
+    var html = '<div class="mini-cal-head"><button type="button" class="mini-cal-nav" data-nav="-1">‹</button><span>' + y + '年' + (mo + 1) + '月</span><button type="button" class="mini-cal-nav" data-nav="1">›</button></div>'
+      + '<div class="mini-cal-wd">' + ['日', '月', '火', '水', '木', '金', '土'].map(function (w) { return '<span>' + w + '</span>'; }).join('') + '</div>'
+      + '<div class="mini-cal-grid">';
+    for (var i = 0; i < startWd; i++) html += '<span></span>';
+    for (var d = 1; d <= daysInMonth; d++) {
+      var ymd = y + '-' + ('0' + (mo + 1)).slice(-2) + '-' + ('0' + d).slice(-2);
+      var cls = 'mini-cal-day' + (ymd === selYmd ? ' is-sel' : '');
+      html += '<span class="' + cls + '" data-date="' + ymd + '">' + d + '</span>';
+    }
+    html += '</div>';
+    pop.innerHTML = html;
+    var r = btn.getBoundingClientRect();
+    pop.style.left = (r.left + window.scrollX) + 'px';
+    pop.style.top = (r.bottom + window.scrollY + 4) + 'px';
+  }
+  pop.addEventListener('click', function (e) {
+    var nav = e.target.getAttribute('data-nav');
+    if (nav) { mo += Number(nav); if (mo < 0) { mo = 11; y--; } else if (mo > 11) { mo = 0; y++; } render(); return; }
+    var ymd = e.target.getAttribute('data-date');
+    if (ymd) {
+      var p2 = ymd.split('-');
+      input.value = Number(p2[1]) + '/' + Number(p2[2]);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      closeMiniCal();
+    }
+  });
+  render();
+}
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest ? e.target.closest('.md-cal-btn') : null;
+  if (btn) {
+    var input = btn.previousElementSibling;
+    if (miniCal.el && miniCal.el.dataset.forBtn === btnKey_(btn)) { closeMiniCal(); return; }
+    openMiniCal(btn, input);
+    if (miniCal.el) miniCal.el.dataset.forBtn = btnKey_(btn);
     return;
   }
-  if (!e.target.classList.contains('mine-save')) return;
+  if (miniCal.el && !miniCal.el.contains(e.target)) closeMiniCal();
+});
+var miniCalBtnSeq = 0;
+function btnKey_(btn) {
+  if (!btn.dataset.calKey) btn.dataset.calKey = String(++miniCalBtnSeq);
+  return btn.dataset.calKey;
+}
+
+document.getElementById('mineBody').addEventListener('change', function (e) {
   var tr = e.target.closest('tr');
-  var no = tr.getAttribute('data-no');
-  var sel = tr.querySelector('.mine-status');
-  var status = sel.value;
-  var meetingRaw = tr.querySelector('.mine-meeting-date').value;
-  var meetingDate = parseMeetingDate(meetingRaw);
-  if (!status) { alert('ステータスを選択してください。'); return; }
-  if (status === '面談予約' && !meetingDate) { alert('「面談予約」にするときは、面談予定日を「9/30」のように入力してください。'); return; }
-  showOverlay(true);
-  call('updateCustomerStatus', state.token, no, status, meetingDate).then(function () {
-    return loadMine(false);
-  }).then(function () {
-    loadCustomers(false);
-    refreshUndo();
-  }).catch(function (e) {
-    alert('保存に失敗しました：' + errMsg(e));
-  }).then(function () { showOverlay(false); });
+  if (!tr) return;
+  if (e.target.classList.contains('mine-status')) {
+    tr.querySelector('.mine-md-wrap').classList.toggle('hidden', e.target.value !== '面談予約');
+    applyStatusSelectColor_(e.target);
+  }
+  if (e.target.classList.contains('mine-line')) {
+    tr.querySelector('.mine-line-md-wrap').classList.toggle('hidden', !e.target.checked);
+  }
+  if (e.target.classList.contains('mine-line') || e.target.classList.contains('mine-status')) {
+    recomputeMineRowDirty(tr);
+  }
+});
+document.getElementById('mineBody').addEventListener('input', function (e) {
+  if (!e.target.classList.contains('mine-meeting-date')) return;
+  recomputeMineRowDirty(e.target.closest('tr'));
 });
 
 /* ============================================================
@@ -1222,6 +1737,7 @@ function renderDup() {
       + td(c.no) + td(c.応募日) + td(c.名前) + td(c.ID) + td(c.媒体) + td(c.案件名) + td(c.担当者) + td(c.運用アカウント) + td(c.重複元NO)
       + '</tr>';
   }).join('') || '<tr><td colspan="9" class="px-3 py-4 text-slate-400 text-sm">重複している顧客はありません。</td></tr>';
+  syncHeadWidths('dupHead', 'dupBody');
 }
 
 /* ============================================================
@@ -1494,7 +2010,7 @@ document.getElementById('calGrid').addEventListener('click', function (e) {
   renderCalendar(state.cal || {});
 });
 
-/* 選んだ日のパネル：面談の名前とチェック、YES数・採用数の入力 */
+/* 選んだ日のパネル：面談の名前とチェック、YES・採用の候補者チェック、数字のみの入力 */
 function renderDayPanel() {
   var panel = document.getElementById('calDayPanel');
   var day = state.calDay;
@@ -1503,7 +2019,9 @@ function renderDayPanel() {
   var cal = state.cal || {};
   var list = (cal.days && cal.days[day]) || [];
   var p = day.split('-');
-  document.getElementById('calDayTitle').textContent = Number(p[1]) + '月' + Number(p[2]) + '日';
+  var dayLabel = Number(p[1]) + '月' + Number(p[2]) + '日';
+  document.getElementById('calDayTitle').textContent = dayLabel;
+  document.getElementById('calDayTitle2').textContent = dayLabel;
   document.getElementById('calDayList').innerHTML = list.map(function (c) {
     return '<label class="flex items-center gap-2 text-sm">'
       + '<input type="checkbox" class="cal-done" data-no="' + escAttr(c.no) + '"' + (c.done ? ' checked' : '') + '>'
@@ -1512,6 +2030,8 @@ function renderDayPanel() {
       + '<span class="text-[11px] text-slate-400">← 面談を実施したらチェック</span>'
       + '</label>';
   }).join('') || '<p class="text-sm text-slate-400">この日に面談予定の方はいません。</p>';
+  renderCandList(day);
+  renderNamedSummary(day);
   var m = (cal.manual && cal.manual[day]) || {};
   document.getElementById('calYes').value = m.yes ? m.yes : '';
   document.getElementById('calHire').value = m.hire ? m.hire : '';
@@ -1529,6 +2049,50 @@ document.getElementById('calDayList').addEventListener('change', function (e) {
     alert('保存に失敗しました：' + errMsg(err));
   }).then(function () { showOverlay(false); });
 });
+
+/* YES・採用の候補者一覧：面談した方のうち、まだYESまたは採用になっていない方（月をまたいで残る） */
+function candCellHtml(no, kind, markedDay, day) {
+  if (markedDay === day) {
+    return '<label class="inline-flex items-center gap-1 text-xs"><input type="checkbox" class="cal-cand" data-no="' + escAttr(no) + '" data-kind="' + kind + '" checked>' + kind + '</label>';
+  }
+  if (markedDay) {
+    return '<span class="text-[11px] text-slate-400">' + kind + '済み（' + escHtml(mdDisplay(markedDay)) + '）</span>';
+  }
+  return '<label class="inline-flex items-center gap-1 text-xs"><input type="checkbox" class="cal-cand" data-no="' + escAttr(no) + '" data-kind="' + kind + '">' + kind + 'にする</label>';
+}
+/* この日に名前つきで記録されたYES・採用（候補者リストから外れた＝両方決まった方でも、ここには残り続ける） */
+function renderNamedSummary(day) {
+  var cal = state.cal || {};
+  var n = (cal.named && cal.named[day]) || { yes: [], hire: [] };
+  var parts = [];
+  if (n.yes && n.yes.length) parts.push('YES → ' + n.yes.map(function (x) { return escHtml(x.名前); }).join('、'));
+  if (n.hire && n.hire.length) parts.push('採用 → ' + n.hire.map(function (x) { return escHtml(x.名前); }).join('、'));
+  document.getElementById('calNamedSummary').innerHTML = parts.length ? 'この日の記録：' + parts.join('　／　') : '';
+}
+function renderCandList(day) {
+  var cal = state.cal || {};
+  var cands = cal.candidates || [];
+  document.getElementById('calCandList').innerHTML = cands.map(function (c) {
+    return '<div class="flex items-center flex-wrap gap-3 text-sm py-0.5">'
+      + '<span class="min-w-[6em]">' + escHtml(c.名前) + '</span>'
+      + candCellHtml(c.no, 'YES', c.yes, day)
+      + candCellHtml(c.no, '採用', c.hire, day)
+      + '</div>';
+  }).join('') || '<p class="text-sm text-slate-400">対象の方はいません。</p>';
+}
+document.getElementById('calCandList').addEventListener('change', function (e) {
+  if (!e.target.classList.contains('cal-cand')) return;
+  var box = e.target;
+  var no = box.getAttribute('data-no');
+  var kind = box.getAttribute('data-kind');
+  showOverlay(true);
+  call('setYesHireNamed', state.token, no, kind, box.checked, state.calDay).then(function () {
+    return Promise.all([loadCalendar(), loadKpi(), refreshUndo()]);
+  }).catch(function (err) {
+    box.checked = !box.checked;
+    alert('保存に失敗しました：' + errMsg(err));
+  }).then(function () { showOverlay(false); });
+});
 function saveDayCounts() {
   var msg = document.getElementById('calDayMsg');
   showOverlay(true);
@@ -1540,6 +2104,37 @@ function saveDayCounts() {
     msg.className = 'text-xs text-red-600';
     msg.textContent = 'エラー：' + errMsg(e);
   }).then(function () { showOverlay(false); });
+}
+
+/* ============================================================
+ *  年代・地域の表記ゆれ統一（サーバー側 normalizeAge_/normalizeRegion_ と同じルール）
+ * ============================================================ */
+var REGIONS_FULL = [
+  '北海道', '青森県', '岩手県', '宮城県', '秋田県', '山形県', '福島県', '茨城県', '栃木県', '群馬県',
+  '埼玉県', '千葉県', '東京都', '神奈川県', '新潟県', '富山県', '石川県', '福井県', '山梨県', '長野県',
+  '岐阜県', '静岡県', '愛知県', '三重県', '滋賀県', '京都府', '大阪府', '兵庫県', '奈良県', '和歌山県',
+  '鳥取県', '島根県', '岡山県', '広島県', '山口県', '徳島県', '香川県', '愛媛県', '高知県', '福岡県',
+  '佐賀県', '長崎県', '熊本県', '大分県', '宮崎県', '鹿児島県', '沖縄県'
+];
+function regionShortJs_(full) { return full === '北海道' ? full : full.replace(/[都道府県]$/, ''); }
+var REGION_SHORT_SET = {};
+REGIONS_FULL.forEach(function (f) { REGION_SHORT_SET[regionShortJs_(f)] = true; });
+/* 地域を「東京」のような短い形にそろえる。空欄OK。47都道府県のどれとも一致しなければエラー */
+function normalizeRegionJs_(raw) {
+  var s = String(raw || '').trim();
+  if (!s) return { ok: true, value: '' };
+  if (s === '北海道') return { ok: true, value: '北海道' };
+  var stripped = s.replace(/[都道府県]$/, '');
+  if (REGION_SHORT_SET[stripped]) return { ok: true, value: stripped };
+  return { ok: false, value: s, message: '地域が都道府県名と一致しません（例：東京、大阪、福岡）' };
+}
+/* 年代は数字だけにそろえる（「20代」「20歳」は自動で「20」に）。空欄OK */
+function normalizeAgeJs_(raw) {
+  var s = String(raw || '').trim().replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); });
+  if (!s) return { ok: true, value: '' };
+  var stripped = s.replace(/(代|歳|才)$/, '');
+  if (!/^\d{1,3}$/.test(stripped)) return { ok: false, value: s, message: '年代は数字で入力してください（例：20）' };
+  return { ok: true, value: stripped };
 }
 
 /* ============================================================

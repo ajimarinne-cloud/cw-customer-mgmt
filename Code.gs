@@ -46,6 +46,38 @@ const OPT_STATUS  = ['垢バン/否認', '公式ライン追加', '面談予約'
 // 「未対応リスト」で対応完了とみなして非表示にするステータス（2026-09-13 追加：対応不可／垢バン・否認も完了扱い）
 const MINE_DONE_STATUS = ['面談済み', '辞退/ﾌﾞﾛｯｸ', '対応不可', '垢バン/否認'];
 
+/* ========== 地域・年代の表記ゆれ統一（2026-10-06 追加） ========== */
+// 地域は「東京」のように都道府県の末尾（都/道/府/県）を外した形にそろえる（北海道のみ例外でそのまま）
+const REGIONS_FULL = [
+  '北海道', '青森県', '岩手県', '宮城県', '秋田県', '山形県', '福島県', '茨城県', '栃木県', '群馬県',
+  '埼玉県', '千葉県', '東京都', '神奈川県', '新潟県', '富山県', '石川県', '福井県', '山梨県', '長野県',
+  '岐阜県', '静岡県', '愛知県', '三重県', '滋賀県', '京都府', '大阪府', '兵庫県', '奈良県', '和歌山県',
+  '鳥取県', '島根県', '岡山県', '広島県', '山口県', '徳島県', '香川県', '愛媛県', '高知県', '福岡県',
+  '佐賀県', '長崎県', '熊本県', '大分県', '宮崎県', '鹿児島県', '沖縄県'
+];
+function regionShort_(full) { return full === '北海道' ? full : full.replace(/[都道府県]$/, ''); }
+const REGION_SHORT_SET = {};
+REGIONS_FULL.forEach(function (f) { REGION_SHORT_SET[regionShort_(f)] = true; });
+
+/** 地域を「東京」のような短い形にそろえる。空欄はOK。47都道府県のどれとも一致しなければエラー */
+function normalizeRegion_(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (s === '北海道') return '北海道';
+  const stripped = s.replace(/[都道府県]$/, '');
+  if (REGION_SHORT_SET[stripped]) return stripped;
+  throw new Error('地域が都道府県名と一致しません：「' + s + '」（例：東京、大阪、福岡）');
+}
+
+/** 年代は数字だけにそろえる（「20代」「20歳」は自動で「20」に）。空欄はOK */
+function normalizeAge_(raw) {
+  const s = String(raw || '').trim().replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); });
+  if (!s) return '';
+  const stripped = s.replace(/(代|歳|才)$/, '');
+  if (!/^\d{1,3}$/.test(stripped)) throw new Error('年代は数字で入力してください（例：20）：「' + s + '」');
+  return stripped;
+}
+
 /* ========== 数字管理（KPI）関連（2026-09-15 追加） ==========
  * YES数・採用数はステータスに追加せず、面談カレンダーで日別に入力した数を
  * システム実績シートに「種別=YES／採用」で記録する。
@@ -608,13 +640,14 @@ function findOwnRow_(sh, no, user, errLabel) {
   return targetRow;
 }
 
-/** システム実績に、その顧客NOでまだ記録されていない種別だけ追記する（二重記録を防ぐ） */
-function logJissekiOnce_(no, user, type) {
+/** システム実績に、その顧客NOでまだ記録されていない種別だけ追記する（二重記録を防ぐ）。
+ *  dateStr を指定すると、その日付で記録する（省略時は今日）。 */
+function logJissekiOnce_(no, user, type, dateStr) {
   const already = sheetObjects_('システム実績').some(function (r) {
     return Number(r.顧客NO) === Number(no) && r.種別 === type;
   });
   if (already) return false;
-  addJisseki_(no, user, type, 1);
+  addJisseki_(no, user, type, 1, dateStr);
   return true;
 }
 
@@ -691,15 +724,23 @@ function getUndoInfo(token) {
   return { count: es.length, label: es.length ? String(es[es.length - 1].内容) : '' };
 }
 
-/** 顧客1行の状態（LINE追加／ステータス／面談予定日、withJis=trueなら数字の記録も）を取る */
+/** 顧客1行の状態（登録項目一式、withJis=trueなら数字の記録も）を取る */
 function customerSnapshot_(sh, row, no, withJis) {
   const tz = Session.getScriptTimeZone();
   const v = sh.getRange(row, 1, 1, COL_LAST).getValues()[0];
   const snap = {
     name: String(v[COL.名前 - 1] || ''),
+    id: String(v[COL.ID - 1] || ''),
     line: v[COL.LINE追加 - 1] === true,
     status: String(v[COL.ステータス - 1] || '').trim(),
-    md: fmtDate_(v[COL.面談予定日 - 1], tz)
+    md: fmtDate_(v[COL.面談予定日 - 1], tz),
+    age: String(v[COL.年齢 - 1] || ''),
+    region: String(v[COL.地域 - 1] || ''),
+    amount: (v[COL.応募金額 - 1] === '' || v[COL.応募金額 - 1] == null) ? '' : String(v[COL.応募金額 - 1]),
+    note: String(v[COL.備考 - 1] || ''),
+    project: String(v[COL.案件名 - 1] || ''),
+    account: String(v[COL.運用アカウント - 1] || ''),
+    media: String(v[COL.媒体 - 1] || '')
   };
   if (withJis) {
     snap.jis = sheetObjects_('システム実績').filter(function (r) {
@@ -715,6 +756,15 @@ function jisKey_(arr) {
   return (arr || []).map(function (j) { return JSON.stringify(j); }).sort().join('|');
 }
 
+/** 2つのスナップショットの登録項目（jis除く）が完全に同じか。
+ *  media は後から追加した項目なので、どちらかに無い（undo履歴がこの変更より前に記録された）場合は比較をスキップする。 */
+function snapsEqual_(a, b) {
+  const mediaOk = (a.media === undefined || b.media === undefined) ? true : a.media === b.media;
+  return a.name === b.name && a.id === b.id && a.line === b.line && a.status === b.status && a.md === b.md
+    && a.age === b.age && a.region === b.region && a.amount === b.amount && a.note === b.note
+    && a.project === b.project && a.account === b.account && mediaOk;
+}
+
 /** 面談予定日セルに書く（空なら消す）。入力規則があっても書けるようにする */
 function setMeetingCell_(sh, row, md) {
   const cell = sh.getRange(row, COL.面談予定日);
@@ -726,17 +776,35 @@ function setMeetingCell_(sh, row, md) {
 }
 
 function writeCustomerCells_(sh, row, snap) {
+  sh.getRange(row, COL.名前).setValue(snap.name);
+  sh.getRange(row, COL.ID).setValue(snap.id);
   sh.getRange(row, COL.LINE追加).setValue(snap.line === true);
   const sc = sh.getRange(row, COL.ステータス);
   if (snap.status) sc.setValue(snap.status); else sc.clearContent();
   setMeetingCell_(sh, row, snap.md);
+  const ac = sh.getRange(row, COL.年齢); if (snap.age) ac.setValue(snap.age); else ac.clearContent();
+  const rc = sh.getRange(row, COL.地域); if (snap.region) rc.setValue(snap.region); else rc.clearContent();
+  const amc = sh.getRange(row, COL.応募金額); if (snap.amount !== '') amc.setValue(Number(snap.amount)); else amc.clearContent();
+  const nc = sh.getRange(row, COL.備考); if (snap.note) nc.setValue(snap.note); else nc.clearContent();
+  sh.getRange(row, COL.案件名).setValue(snap.project);
+  sh.getRange(row, COL.運用アカウント).setValue(snap.account);
+  if (snap.media != null) sh.getRange(row, COL.媒体).setValue(snap.media);
 }
 
 function describeChange_(before, after) {
   const parts = [];
+  if (before.name !== after.name) parts.push('名前「' + before.name + '」→「' + after.name + '」');
+  if (before.id !== after.id) parts.push('ID「' + before.id + '」→「' + after.id + '」');
   if (before.line !== after.line) parts.push('LINE追加を' + (after.line ? 'オン' : 'オフ'));
   if (before.status !== after.status) parts.push('ステータス「' + (before.status || '未設定') + '」→「' + (after.status || '未設定') + '」');
   if (before.md !== after.md) parts.push('面談日 ' + (mdShort_(before.md) || 'なし') + '→' + (mdShort_(after.md) || 'なし'));
+  if (before.age !== after.age) parts.push('年代「' + (before.age || '未入力') + '」→「' + (after.age || '未入力') + '」');
+  if (before.region !== after.region) parts.push('地域「' + (before.region || '未入力') + '」→「' + (after.region || '未入力') + '」');
+  if (before.amount !== after.amount) parts.push('応募金額「' + (before.amount || '未入力') + '」→「' + (after.amount || '未入力') + '」');
+  if (before.note !== after.note) parts.push('備考を変更');
+  if (before.project !== after.project) parts.push('案件名「' + before.project + '」→「' + after.project + '」');
+  if (before.account !== after.account) parts.push('運用アカウント「' + before.account + '」→「' + after.account + '」');
+  if (before.media !== after.media) parts.push('媒体「' + (before.media || '未入力') + '」→「' + (after.media || '未入力') + '」');
   return parts.join('、');
 }
 
@@ -750,30 +818,83 @@ function applyCustomerChange_(user, sh, row, no, describe, mutate) {
   mutate(before);
   SpreadsheetApp.flush();
   const afterFull = customerSnapshot_(sh, row, no, true);
-  const changed = before.line !== afterFull.line || before.status !== afterFull.status || before.md !== afterFull.md
-    || jisKey_(before.jis) !== jisKey_(afterFull.jis);
+  const changed = !snapsEqual_(before, afterFull) || jisKey_(before.jis) !== jisKey_(afterFull.jis);
   if (!changed) return;
   const desc = (describe ? describe(before, afterFull) : '') || describeChange_(before, afterFull) || '数字の記録を更新';
   recordUndo_(user, 'NO:' + no + ' ' + before.name + '：' + desc, {
     kind: 'customer', no: Number(no), before: before,
-    after: { line: afterFull.line, status: afterFull.status, md: afterFull.md }
+    after: {
+      name: afterFull.name, id: afterFull.id, line: afterFull.line, status: afterFull.status, md: afterFull.md,
+      age: afterFull.age, region: afterFull.region, amount: afterFull.amount, note: afterFull.note,
+      project: afterFull.project, account: afterFull.account, media: afterFull.media
+    }
   });
 }
 
 /**
- * 顧客の LINE追加／ステータス／面談予定日 をまとめて更新する共通処理（自分の担当顧客のみ）。
- * patch: { line: true|false, status: '面談予約' など（'' は未設定に戻す）, md: 'yyyy-mm-dd' }
- * 指定した項目だけ変える。数字（システム実績）は次のルールで合わせる。
+ * 重複判定をID単位で再計算する（IDを編集で変えたときに使う）。
+ * 指定したID（変更前・変更後の両方）について、顧客リスト全体から同じIDの行をすべて集め、
+ * 2件以上あれば「重複あり」としてV/W/X列と行の色を付け直し、1件以下なら解除する。
+ */
+function recomputeDuplicatesForIds_(sh, ids) {
+  const uniqueIds = [];
+  (ids || []).forEach(function (x) {
+    const v = String(x || '').trim();
+    if (v && uniqueIds.indexOf(v) < 0) uniqueIds.push(v);
+  });
+  if (!uniqueIds.length) return;
+  const last = sh.getLastRow();
+  if (last < CUSTOMER_START_ROW) return;
+  const n = last - CUSTOMER_START_ROW + 1;
+  const idVals = sh.getRange(CUSTOMER_START_ROW, COL.ID, n, 1).getValues();
+  const noVals = sh.getRange(CUSTOMER_START_ROW, COL.NO, n, 1).getValues();
+  const groups = {};
+  uniqueIds.forEach(function (id) { groups[id] = []; });
+  for (let i = 0; i < n; i++) {
+    const id = String(idVals[i][0] || '').trim();
+    if (!id || !Object.prototype.hasOwnProperty.call(groups, id)) continue;
+    groups[id].push({ row: CUSTOMER_START_ROW + i, no: noVals[i][0] });
+  }
+  Object.keys(groups).forEach(function (id) {
+    const members = groups[id];
+    if (members.length <= 1) {
+      members.forEach(function (m) {
+        sh.getRange(m.row, COL.重複).clearContent();
+        sh.getRange(m.row, COL.重複元NO).clearContent();
+        sh.getRange(m.row, COL.次工程).clearContent();
+        sh.getRange(m.row, 1, 1, COL_LAST).setBackground(null);
+      });
+      return;
+    }
+    members.forEach(function (m) {
+      const others = members.filter(function (x) { return x.row !== m.row; }).map(function (x) { return x.no; });
+      sh.getRange(m.row, COL.重複).setValue('重複あり');
+      sh.getRange(m.row, COL.重複元NO).setValue(others.join(','));
+      sh.getRange(m.row, COL.次工程).setValue('不可');
+      sh.getRange(m.row, 1, 1, COL_LAST).setBackground('#f8c9c4');
+    });
+  });
+}
+
+/**
+ * 顧客の登録項目をまとめて更新する共通処理（自分の担当顧客のみ）。指定した項目だけ変える。
+ * patch: { line, lineDate(LINE追加した日。省略時は今日), status, md, name, id, age(年代), region(地域), amount(応募金額),
+ *          note(備考), project(案件名), account(運用アカウント), media(媒体) }
+ * 数字（システム実績）は次のルールで合わせる。
  *  - LINE追加オン ：種別「LINE追加」を1回だけ記録／オフ：その記録を消す
  *  - ステータスが「面談予約」「面談済み」 ：種別「アポ日程切」を1回だけ記録
  *  - ステータスを上記以外へ変更   ：「アポ日程切」の記録を消す
  *  - ステータスを「面談済み」以外へ変更 ：「面談完了」（アポ済み）の記録も消す
  *  - 「面談予約」にするときは面談予定日が必須
+ *  - 年代・地域は空欄OK。非空で正しく読み取れない場合はエラー（normalizeAge_/normalizeRegion_）
+ *  - IDを変えたときは、変更前・変更後それぞれのIDで重複判定をやり直す
  */
 function editCustomer_(token, no, patch, errLabel) {
   const user = requireUser_(token);
   patch = patch || {};
-  let st = null, md = null;
+  let st = null, md = null, name = null, id = null, age = null, region = null,
+    amount = null, note = null, project = null, account = null, media = null;
+
   if (patch.status !== undefined && patch.status !== null) {
     st = String(patch.status).trim();
     if (st && OPT_STATUS.indexOf(st) < 0) throw new Error('ステータスが選択肢と一致しません：「' + st + '」');
@@ -781,6 +902,33 @@ function editCustomer_(token, no, patch, errLabel) {
   if (patch.md !== undefined && patch.md !== null) {
     md = String(patch.md).trim();
     if (md && !DATE_RE.test(md)) throw new Error('面談予定日が正しくありません。');
+  }
+  if (patch.name !== undefined && patch.name !== null) {
+    name = String(patch.name).trim();
+    if (!name) throw new Error('名前を入力してください。');
+  }
+  if (patch.id !== undefined && patch.id !== null) {
+    id = String(patch.id).trim();
+    if (!id) throw new Error('IDを入力してください。');
+  }
+  if (patch.age !== undefined && patch.age !== null) age = normalizeAge_(patch.age);
+  if (patch.region !== undefined && patch.region !== null) region = normalizeRegion_(patch.region);
+  if (patch.amount !== undefined && patch.amount !== null) {
+    amount = String(patch.amount).trim();
+    if (amount && isNaN(Number(amount))) throw new Error('応募金額は数字で入力してください。');
+  }
+  if (patch.note !== undefined && patch.note !== null) note = String(patch.note);
+  if (patch.project !== undefined && patch.project !== null) {
+    project = String(patch.project).trim();
+    if (project && OPT_PROJECT.indexOf(project) < 0) throw new Error('案件名が選択肢と一致しません：「' + project + '」');
+  }
+  if (patch.account !== undefined && patch.account !== null) {
+    account = String(patch.account).trim();
+    if (!account) throw new Error('運用アカウントを入力してください。');
+  }
+  if (patch.media !== undefined && patch.media !== null) {
+    media = String(patch.media).trim();
+    if (media && OPT_MEDIA.indexOf(media) < 0) throw new Error('媒体が選択肢と一致しません：「' + media + '」');
   }
 
   const lock = LockService.getScriptLock();
@@ -790,6 +938,7 @@ function editCustomer_(token, no, patch, errLabel) {
   try {
     const sh = ss_().getSheetByName(CUSTOMER_SHEET);
     const row = findOwnRow_(sh, no, user, errLabel || '更新');
+    let idChanged = null;
     applyCustomerChange_(user, sh, row, no, null, function (before) {
       const newStatus = (st === null) ? before.status : st;
       const newMd = (md === null) ? before.md : md;
@@ -800,7 +949,10 @@ function editCustomer_(token, no, patch, errLabel) {
       if (patch.line !== undefined && patch.line !== null) {
         const on = (patch.line === true || patch.line === 'true');
         sh.getRange(row, COL.LINE追加).setValue(on);
-        if (on) logJissekiOnce_(no, user, 'LINE追加');
+        if (on) {
+          const lineDate = (patch.lineDate && DATE_RE.test(patch.lineDate)) ? patch.lineDate : undefined;
+          logJissekiOnce_(no, user, 'LINE追加', lineDate);
+        }
         else deleteJissekiRows_(function (r) { return Number(r.顧客NO) === Number(no) && r.種別 === 'LINE追加'; });
       }
 
@@ -815,10 +967,37 @@ function editCustomer_(token, no, patch, errLabel) {
         if (st !== before.status && st !== '面談済み') {
           deleteJissekiRows_(function (r) { return Number(r.顧客NO) === Number(no) && r.種別 === '面談完了'; });
         }
+        // ステータスを「公式ライン追加」にしたときは、LINE追加チェックを別途操作しなくても
+        // LINE追加列・実績を今までどおり記録する（patch.line が明示されたときはそちらを優先）
+        if (st === '公式ライン追加' && patch.line === undefined) {
+          sh.getRange(row, COL.LINE追加).setValue(true);
+          logJissekiOnce_(no, user, 'LINE追加');
+        }
       }
 
       if (md !== null && md !== before.md) setMeetingCell_(sh, row, md);
+      if (name !== null && name !== before.name) sh.getRange(row, COL.名前).setValue(name);
+      if (id !== null && id !== before.id) {
+        sh.getRange(row, COL.ID).setValue(id);
+        idChanged = { oldId: before.id, newId: id };
+      }
+      if (age !== null && age !== before.age) {
+        const c = sh.getRange(row, COL.年齢); if (age) c.setValue(age); else c.clearContent();
+      }
+      if (region !== null && region !== before.region) {
+        const c = sh.getRange(row, COL.地域); if (region) c.setValue(region); else c.clearContent();
+      }
+      if (amount !== null && amount !== before.amount) {
+        const c = sh.getRange(row, COL.応募金額); if (amount) c.setValue(Number(amount)); else c.clearContent();
+      }
+      if (note !== null && note !== before.note) {
+        const c = sh.getRange(row, COL.備考); if (note) c.setValue(note); else c.clearContent();
+      }
+      if (project !== null && project !== before.project) sh.getRange(row, COL.案件名).setValue(project);
+      if (account !== null && account !== before.account) sh.getRange(row, COL.運用アカウント).setValue(account);
+      if (media !== null && media !== before.media) sh.getRange(row, COL.媒体).setValue(media);
     });
+    if (idChanged) recomputeDuplicatesForIds_(sh, [idChanged.oldId, idChanged.newId]);
     return { ok: true };
   } finally {
     lock.releaseLock();
@@ -848,6 +1027,27 @@ function markLineAdded(token, no) {
 /** 顧客一覧の編集（自分の担当顧客のみ）：patch = { line, status, md } の指定した項目だけ更新 */
 function updateCustomerFields(token, no, patch) {
   return editCustomer_(token, no, patch, '更新');
+}
+
+/**
+ * 複数件をまとめて更新する（「まとめて保存」用）。
+ * items: [{ no, patch }, ...]。1件ずつ editCustomer_ を呼ぶ（それぞれ別の元に戻す履歴になる）。
+ * 1件失敗しても他の行の処理は続ける。戻り値： { results: [{index, no, ok, message}] }
+ */
+function updateCustomerFieldsBulk(token, items) {
+  requireUser_(token);
+  if (!Array.isArray(items) || !items.length) throw new Error('保存する内容がありません。');
+  if (items.length > 200) throw new Error('一度に保存できるのは200件までです。');
+  const results = [];
+  items.forEach(function (item, i) {
+    try {
+      editCustomer_(token, item.no, item.patch || {}, '更新');
+      results.push({ index: i, no: item.no, ok: true });
+    } catch (e) {
+      results.push({ index: i, no: item.no, ok: false, message: e.message });
+    }
+  });
+  return { results: results };
 }
 
 /* ============================================================
@@ -982,16 +1182,22 @@ function undoLast(token) {
       const cs = ss_().getSheetByName(CUSTOMER_SHEET);
       const row = findOwnRow_(cs, data.no, user, '元に戻');
       const cur = customerSnapshot_(cs, row, data.no, false);
-      if (cur.line !== data.after.line || cur.status !== data.after.status || cur.md !== data.after.md) conflict();
+      if (!snapsEqual_(cur, data.after)) conflict();
       writeCustomerCells_(cs, row, data.before);
       deleteJissekiRows_(function (r) {
         return Number(r.顧客NO) === Number(data.no) && CUSTOMER_JIS_TYPES.indexOf(r.種別) >= 0;
       });
       (data.before.jis || []).forEach(function (j) { addJisseki_(data.no, user, j[1], j[2], j[0]); });
+      if (data.before.id !== data.after.id) recomputeDuplicatesForIds_(cs, [data.before.id, data.after.id]);
     } else if (data.kind === 'day') {
       const cur = manualDayValues_(user, data.day);
       if (cur.yes !== data.after.yes || cur.hire !== data.after.hire) conflict();
       writeDayCounts_(user, data.day, { 'YES': data.before.yes || '', '採用': data.before.hire || '' });
+    } else if (data.kind === 'named') {
+      const cur = personMarkDay_(data.no, data.type);
+      if (cur !== data.after) conflict();
+      deleteJissekiRows_(function (r) { return Number(r.顧客NO) === Number(data.no) && r.種別 === data.type; });
+      if (data.before) addJisseki_(data.no, user, data.type, 1, data.before);
     } else {
       hist.deleteRow(e._row);
       throw new Error('この操作は元に戻せません。');
@@ -1139,6 +1345,8 @@ function registerBatch(token, rows) {
         }
         if (OPT_PROJECT.indexOf(project) < 0) throw new Error('案件名が選択肢と一致しません：「' + project + '」');
         if (OPT_MEDIA.indexOf(media) < 0)     throw new Error('媒体が選択肢と一致しません：「' + media + '」');
+        const age    = normalizeAge_(payload.年齢);
+        const region = normalizeRegion_(payload.地域);
 
         // 重複していても登録する（応募数として数え、重複あり／不可 として記録）
         const dupNos = (idIndex[id] || []).slice();   // 既存＋このバッチで先に確定したID
@@ -1150,7 +1358,7 @@ function registerBatch(token, rows) {
 
         writeCustomerRow_(sh, targetRow, {
           no: newNo, 名前: name, ID: id,
-          年齢: payload.年齢, 地域: payload.地域, 応募金額: payload.応募金額,
+          年齢: age, 地域: region, 応募金額: payload.応募金額,
           応募日: today, 案件名: project, 担当者: user.表示担当者名,
           運用アカウント: account, 媒体: media,
           LINE追加: payload.LINE追加 === true, 備考: payload.備考,
@@ -1344,11 +1552,14 @@ function computeEventCounts_(months) {
 
 /**
  * 面談カレンダー用：ログインユーザーが担当した顧客の、指定した年月ぶんの情報を返す。
- *  days    : 面談予定日（Q列）が入っている日ごとの顧客 [{no,名前,ステータス,done}]
- *            done＝その顧客のアポ済み（面談完了）が記録されているか
- *  totals  : 日ごとの数字 { 'YYYY-MM-DD': {done, yes, hire} }（システム実績の合計）
- *  manual  : 日別入力の値 { 'YYYY-MM-DD': {yes, hire} }（顧客に紐づかない入力ぶん）
- * 戻り値： { year, month, days, totals, manual }
+ *  days       : 面談予定日（Q列）が入っている日ごとの顧客 [{no,名前,ステータス,done}]
+ *               done＝その顧客のアポ済み（面談完了）が記録されているか
+ *  totals     : 日ごとの数字 { 'YYYY-MM-DD': {done, yes, hire} }（システム実績の合計。名前つき＋数字のみの両方を含む）
+ *  manual     : 日別入力の値 { 'YYYY-MM-DD': {yes, hire} }（顧客に紐づかない「数字のみ」入力ぶん）
+ *  named      : 日別の名前つきYES・採用 { 'YYYY-MM-DD': {yes:[{no,名前}], hire:[{no,名前}]} }
+ *  candidates : まだYESまたは採用のどちらかが済んでいない、面談済みの顧客一覧
+ *               [{no, 名前, yes:'yyyy-mm-dd'|'', hire:'yyyy-mm-dd'|''}]（面談日が過ぎても消えず、月をまたいで残る）
+ * 戻り値： { year, month, days, totals, manual, named, candidates }
  */
 function getMeetingCalendar(token, opts) {
   const user = requireUser_(token);
@@ -1359,27 +1570,36 @@ function getMeetingCalendar(token, opts) {
   const month = Math.min(Math.max(Number(opts.month) || Number(Utilities.formatDate(now, tz, 'M')), 1), 12);
   const ym = year + '-' + pad2_(month);
 
-  // システム実績：面談完了済みの顧客NO、日ごとの合計、日別入力ぶん
-  const doneNos = {}, totals = {}, manual = {};
+  // システム実績：面談完了済みの顧客NO、日ごとの合計、日別入力ぶん、名前つきYES・採用、顧客ごとのYES・採用の記録日
+  const doneNos = {}, totals = {}, manual = {}, named = {};
+  const yesDoneNo = {}, hireDoneNo = {};   // 顧客NO → 記録した日（全期間。1人1件の想定）
   sheetObjects_('システム実績').forEach(function (r) {
     if (String(r.担当者 || '').trim() !== user.表示担当者名) return;
     const day = fmtDate_(r.日付, tz);
     const n = (r.数値 === '' || r.数値 == null) ? 1 : (Number(r.数値) || 0);
+    const hasNo = !(r.顧客NO === '' || r.顧客NO == null);
     if (r.種別 === '面談完了') doneNos[Number(r.顧客NO)] = true;
+    if (r.種別 === 'YES' && hasNo) yesDoneNo[Number(r.顧客NO)] = day;
+    if (r.種別 === '採用' && hasNo) hireDoneNo[Number(r.顧客NO)] = day;
     if (day.indexOf(ym) !== 0) return;
     if (!totals[day]) totals[day] = { done: 0, yes: 0, hire: 0 };
     if (r.種別 === '面談完了') totals[day].done += n;
     else if (r.種別 === 'YES') totals[day].yes += n;
     else if (r.種別 === '採用') totals[day].hire += n;
-    if ((r.種別 === 'YES' || r.種別 === '採用') && (r.顧客NO === '' || r.顧客NO == null)) {
+    if ((r.種別 === 'YES' || r.種別 === '採用') && !hasNo) {
       if (!manual[day]) manual[day] = { yes: 0, hire: 0 };
       if (r.種別 === 'YES') manual[day].yes += n; else manual[day].hire += n;
+    }
+    if ((r.種別 === 'YES' || r.種別 === '採用') && hasNo) {
+      if (!named[day]) named[day] = { yes: [], hire: [] };
+      (r.種別 === 'YES' ? named[day].yes : named[day].hire).push(Number(r.顧客NO));
     }
   });
 
   const sh = ss_().getSheetByName(CUSTOMER_SHEET);
   const last = sh.getLastRow();
   const days = {};
+  const nameOf = {};
   if (last >= CUSTOMER_START_ROW) {
     const values = sh.getRange(CUSTOMER_START_ROW, 1, last - CUSTOMER_START_ROW + 1, COL_LAST).getValues();
     values.forEach(function (r) {
@@ -1388,14 +1608,71 @@ function getMeetingCalendar(token, opts) {
       if (!name && !id) return;
       const owner = String(r[COL.担当者 - 1] || '').trim();
       if (owner !== user.表示担当者名) return;
+      const no = r[COL.NO - 1];
+      nameOf[Number(no)] = name;
       const md = fmtDate_(r[COL.面談予定日 - 1], tz);
       if (!md || md.indexOf(ym) !== 0) return;
       if (!days[md]) days[md] = [];
-      const no = r[COL.NO - 1];
       days[md].push({ no: no, 名前: name, ステータス: r[COL.ステータス - 1], done: doneNos[Number(no)] === true });
     });
   }
-  return { year: year, month: month, days: days, totals: totals, manual: manual };
+
+  // 名前つきYES・採用のNOを名前つきオブジェクトに変換
+  Object.keys(named).forEach(function (day) {
+    named[day].yes = named[day].yes.map(function (no) { return { no: no, 名前: nameOf[no] || ('NO:' + no) }; });
+    named[day].hire = named[day].hire.map(function (no) { return { no: no, 名前: nameOf[no] || ('NO:' + no) }; });
+  });
+
+  // YES・採用の候補者：面談済み(doneNos)で、YES・採用のどちらかがまだの人（自分の現役顧客のみ）。月をまたいで残る
+  const candidates = Object.keys(doneNos).map(Number)
+    .filter(function (no) { return nameOf[no] != null; })
+    .map(function (no) { return { no: no, 名前: nameOf[no], yes: yesDoneNo[no] || '', hire: hireDoneNo[no] || '' }; })
+    .filter(function (c) { return !c.yes || !c.hire; })
+    .sort(function (a, b) { return a.no - b.no; });
+
+  return { year: year, month: month, days: days, totals: totals, manual: manual, named: named, candidates: candidates };
+}
+
+/** その顧客の、指定した種別(YES/採用)の記録日を返す（無ければ空文字） */
+function personMarkDay_(no, type) {
+  const rows = sheetObjects_('システム実績').filter(function (r) {
+    return Number(r.顧客NO) === Number(no) && r.種別 === type;
+  });
+  return rows.length ? fmtDate_(rows[0].日付) : '';
+}
+
+/**
+ * 名前つきのYES・採用を付ける/外す（面談カレンダーの日別パネルから）。
+ * kind: 'YES' または '採用'。checked=trueで、指定した日(dateStr)の記録として1件追加する
+ * （既存の記録があれば一度削除してから入れ直す＝記録日の付け替え）。checked=falseで記録を削除する。
+ * 自分が担当した顧客のみ操作できる。
+ */
+function setYesHireNamed(token, no, kind, checked, dateStr) {
+  const user = requireUser_(token);
+  const type = (kind === '採用') ? '採用' : 'YES';
+  const day = String(dateStr || '').trim();
+  if (checked && !DATE_RE.test(day)) throw new Error('日付が正しくありません。');
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    throw new Error('現在ほかの処理が実行中です。数秒待ってからもう一度お試しください。');
+  }
+  try {
+    const sh = ss_().getSheetByName(CUSTOMER_SHEET);
+    findOwnRow_(sh, no, user, type + 'を更新');   // 権限チェック（自分の担当顧客か）
+    const before = personMarkDay_(no, type);
+    deleteJissekiRows_(function (r) { return Number(r.顧客NO) === Number(no) && r.種別 === type; });
+    if (checked) addJisseki_(no, user, type, 1, day);
+    SpreadsheetApp.flush();
+    const after = checked ? day : '';
+    if (before !== after) {
+      const label = 'NO:' + no + ' ' + type + (checked ? '（' + mdShort_(day) + '）に設定' : 'を解除');
+      recordUndo_(user, label, { kind: 'named', no: Number(no), type: type, before: before, after: after });
+    }
+    return { ok: true };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /** 見出し行から列名の位置(0始まり)を探す。前後や途中の空白（全角含む）は無視する。無ければ -1 */
