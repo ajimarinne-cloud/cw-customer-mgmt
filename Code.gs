@@ -1158,9 +1158,11 @@ function undoLast(token) {
       if (cur !== data.after) conflict();
       deleteJissekiRows_(function (r) { return Number(r.顧客NO) === Number(data.no) && r.種別 === data.type; });
       if (data.before) addJisseki_(data.no, user, data.type, 1, data.before);
-    } else if (data.kind === 'hireResult') {
-      if (JSON.stringify(hireResultOf_(data.no)) !== JSON.stringify(data.after)) conflict();
-      deleteJissekiRows_(function (r) { return Number(r.顧客NO) === Number(data.no) && (r.種別 === '採用' || r.種別 === '不採用'); });
+    } else if (data.kind === 'result' || data.kind === 'hireResult') {
+      const group = data.group || 'hire';
+      const types = RESULT_GROUPS[group].types;
+      if (JSON.stringify(resultOf_(data.no, group)) !== JSON.stringify(data.after)) conflict();
+      deleteJissekiRows_(function (r) { return Number(r.顧客NO) === Number(data.no) && types.indexOf(r.種別) >= 0; });
       if (data.before) addJisseki_(data.no, user, data.before.type, 1, data.before.day);
     } else {
       hist.deleteRow(e._row);
@@ -1516,14 +1518,15 @@ function computeEventCounts_(months) {
 
 /**
  * 面談カレンダー用：ログインユーザーが担当した顧客の、指定した年月ぶんの情報を返す。
- *  days    : 面談予定日（Q列）が入っている日ごとの顧客
- *            [{no, 名前, ステータス, done, yes, hire}]
- *            done＝アポ済み（面談完了）が記録されているか、yes＝YESの記録日（なければ''）、
- *            hire＝採用結果 {type:'採用'|'不採用', day}（未定なら null）
- *  totals  : 日ごとの数字 { 'YYYY-MM-DD': {done, yes, hire} }（システム実績の合計。過去の数字のみの入力ぶんも含む）
- *  pending : 面談済み・YESの顧客のうち、採用結果が未定の人と、この月に採用結果を決めた人（月をまたいで残る）
- *            [{no, 名前, doneDay, yes, hire}]。画面側で「選んだ日より前に面談した人」を持ち越しとして出す。
- * 戻り値： { year, month, days, totals, pending }
+ *  days      : 面談予定日（Q列）が入っている日ごとの顧客
+ *              [{no, 名前, ステータス, done, yesNo, hire}]
+ *              done＝アポ済み（面談完了）が記録されているか、
+ *              yesNo＝{type:'YES'|'NO', day}、hire＝{type:'採用'|'不採用', day}（未定なら null）
+ *  totals    : 日ごとの数字 { 'YYYY-MM-DD': {done, yes, hire} }（システム実績の合計。過去の数字のみの入力ぶんも含む）
+ *  followups : 面談済みの顧客のうち、結果（YES／NO、YESなら採用／不採用）がまだの人（月をまたいで残る）と、
+ *              この月に結果を入れた人。[{no, 名前, doneDay, yesNo, hire}]
+ *              画面側で「選んだ日より前に面談した人」を、未定なら持ち越し、その日に入れたなら「この日に結果を入れた方」に出す。
+ * 戻り値： { year, month, days, totals, followups }
  */
 function getMeetingCalendar(token, opts) {
   const user = requireUser_(token);
@@ -1534,9 +1537,9 @@ function getMeetingCalendar(token, opts) {
   const month = Math.min(Math.max(Number(opts.month) || Number(Utilities.formatDate(now, tz, 'M')), 1), 12);
   const ym = year + '-' + pad2_(month);
 
-  // システム実績：日ごとの合計と、顧客ごとの面談完了日・YES日・採用結果（全期間。1人1件の想定）
+  // システム実績：日ごとの合計と、顧客ごとの面談完了日・YES/NO・採用結果（全期間。1人1件の想定）
   const totals = {};
-  const doneDayOf = {}, yesDayOf = {}, hireOf = {};
+  const doneDayOf = {}, yesNoOf = {}, hireOf = {};
   sheetObjects_('システム実績').forEach(function (r) {
     if (String(r.担当者 || '').trim() !== user.表示担当者名) return;
     const day = fmtDate_(r.日付, tz);
@@ -1544,7 +1547,7 @@ function getMeetingCalendar(token, opts) {
     if (!(r.顧客NO === '' || r.顧客NO == null)) {
       const no = Number(r.顧客NO);
       if (r.種別 === '面談完了') doneDayOf[no] = day;
-      else if (r.種別 === 'YES') yesDayOf[no] = day;
+      else if (r.種別 === 'YES' || r.種別 === 'NO') yesNoOf[no] = { type: r.種別, day: day };
       else if (r.種別 === '採用' || r.種別 === '不採用') hireOf[no] = { type: r.種別, day: day };
     }
     if (day.indexOf(ym) !== 0) return;
@@ -1573,21 +1576,24 @@ function getMeetingCalendar(token, opts) {
       if (!days[md]) days[md] = [];
       days[md].push({
         no: no, 名前: name, ステータス: r[COL.ステータス - 1],
-        done: doneDayOf[no] != null, yes: yesDayOf[no] || '', hire: hireOf[no] || null
+        done: doneDayOf[no] != null, yesNo: yesNoOf[no] || null, hire: hireOf[no] || null
       });
     });
   }
 
-  // 採用の結果待ち：面談済み・YESで、採用結果が未定の人（月をまたいで残る）＋この月に結果を決めた人（決めた日に表示するため）
-  const pending = Object.keys(yesDayOf).map(Number)
+  // 面談済みの人のうち、結果がまだの人（月をまたいで残る）と、この月に結果を入れた人
+  const inMonth = function (x) { return !!x && x.day.indexOf(ym) === 0; };
+  const followups = Object.keys(doneDayOf).map(Number)
     .filter(function (no) {
-      if (nameOf[no] == null || !doneDayOf[no]) return false;
-      return !hireOf[no] || hireOf[no].day.indexOf(ym) === 0;
+      if (nameOf[no] == null) return false;
+      const yn = yesNoOf[no], hire = hireOf[no];
+      const pending = !yn || (yn.type === 'YES' && !hire);
+      return pending || inMonth(yn) || inMonth(hire);
     })
-    .map(function (no) { return { no: no, 名前: nameOf[no], doneDay: doneDayOf[no], yes: yesDayOf[no], hire: hireOf[no] || null }; })
+    .map(function (no) { return { no: no, 名前: nameOf[no], doneDay: doneDayOf[no], yesNo: yesNoOf[no] || null, hire: hireOf[no] || null }; })
     .sort(function (a, b) { return a.doneDay < b.doneDay ? -1 : a.doneDay > b.doneDay ? 1 : a.no - b.no; });
 
-  return { year: year, month: month, days: days, totals: totals, pending: pending };
+  return { year: year, month: month, days: days, totals: totals, followups: followups };
 }
 
 /** その顧客の、指定した種別(YES/採用)の記録日を返す（無ければ空文字） */
@@ -1598,22 +1604,30 @@ function personMarkDay_(no, type) {
   return rows.length ? fmtDate_(rows[0].日付) : '';
 }
 
-/** その顧客の採用結果（採用／不採用の記録）を返す。無ければ null */
-function hireResultOf_(no) {
+/* 面談の結果の組（1人につき各組1件だけ記録する）。NO・不採用は数字管理には数えない */
+const RESULT_GROUPS = {
+  yesNo: { types: ['YES', 'NO'], label: 'YES/NO' },
+  hire:  { types: ['採用', '不採用'], label: '採用結果' }
+};
+
+/** その顧客の、指定した組の結果（{type, day}）を返す。無ければ null */
+function resultOf_(no, group) {
+  const types = RESULT_GROUPS[group].types;
   const rows = sheetObjects_('システム実績').filter(function (r) {
-    return Number(r.顧客NO) === Number(no) && (r.種別 === '採用' || r.種別 === '不採用');
+    return Number(r.顧客NO) === Number(no) && types.indexOf(r.種別) >= 0;
   });
   return rows.length ? { type: String(rows[0].種別), day: fmtDate_(rows[0].日付) } : null;
 }
 
 /**
- * 採用結果を付ける・外す（面談カレンダーの日別パネルから）。自分が担当した顧客のみ。
- * result: 'hire'（採用）／'ng'（不採用）／''（未定に戻す）。指定した日(dateStr)の記録として入れ直す。
- * 不採用は数字管理には数えず、「採用の結果待ち」の持ち越しを終わらせるためだけに使う。
+ * 面談の結果を付ける・外す（面談カレンダーの日別パネルから）。自分が担当した顧客のみ。
+ * type が組の選択肢のどれかなら、指定した日(dateStr)の記録として入れ直す（組の中で1件だけ）。'' なら未定に戻す。
  */
-function setHireResult(token, no, result, dateStr) {
+function setResult_(token, no, group, type, dateStr) {
   const user = requireUser_(token);
-  const type = result === 'hire' ? '採用' : result === 'ng' ? '不採用' : '';
+  const g = RESULT_GROUPS[group];
+  type = String(type || '');
+  if (type && g.types.indexOf(type) < 0) throw new Error('選択肢が正しくありません。');
   const day = String(dateStr || '').trim();
   if (type && !DATE_RE.test(day)) throw new Error('日付が正しくありません。');
 
@@ -1623,15 +1637,15 @@ function setHireResult(token, no, result, dateStr) {
   }
   try {
     const sh = ss_().getSheetByName(CUSTOMER_SHEET);
-    findOwnRow_(sh, no, user, '採用結果を更新');
-    const before = hireResultOf_(no);
-    deleteJissekiRows_(function (r) { return Number(r.顧客NO) === Number(no) && (r.種別 === '採用' || r.種別 === '不採用'); });
+    findOwnRow_(sh, no, user, g.label + 'を更新');
+    const before = resultOf_(no, group);
+    deleteJissekiRows_(function (r) { return Number(r.顧客NO) === Number(no) && g.types.indexOf(r.種別) >= 0; });
     if (type) addJisseki_(no, user, type, 1, day);
     SpreadsheetApp.flush();
     const after = type ? { type: type, day: day } : null;
     if (JSON.stringify(before) !== JSON.stringify(after)) {
-      const label = 'NO:' + no + (type ? ' ' + type + '（' + mdShort_(day) + '）に設定' : ' 採用結果を未定に戻した');
-      recordUndo_(user, label, { kind: 'hireResult', no: Number(no), before: before, after: after });
+      const label = 'NO:' + no + ' ' + g.label + (type ? 'を「' + type + '」（' + mdShort_(day) + '）に設定' : 'を未定に戻した');
+      recordUndo_(user, label, { kind: 'result', group: group, no: Number(no), before: before, after: after });
     }
     return { ok: true };
   } finally {
@@ -1639,38 +1653,14 @@ function setHireResult(token, no, result, dateStr) {
   }
 }
 
-/**
- * 名前つきのYESを付ける/外す（面談カレンダーの日別パネルから）。
- * checked=trueで、指定した日(dateStr)の記録として1件追加する
- * （既存の記録があれば一度削除してから入れ直す＝記録日の付け替え）。checked=falseで記録を削除する。
- * 自分が担当した顧客のみ操作できる。
- */
-function setYesNamed(token, no, checked, dateStr) {
-  const user = requireUser_(token);
-  const type = 'YES';
-  const day = String(dateStr || '').trim();
-  if (checked && !DATE_RE.test(day)) throw new Error('日付が正しくありません。');
+/** YES／NO を付ける・外す。type: 'YES'／'NO'／''（未定に戻す） */
+function setYesNoResult(token, no, type, dateStr) {
+  return setResult_(token, no, 'yesNo', type, dateStr);
+}
 
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(30000)) {
-    throw new Error('現在ほかの処理が実行中です。数秒待ってからもう一度お試しください。');
-  }
-  try {
-    const sh = ss_().getSheetByName(CUSTOMER_SHEET);
-    findOwnRow_(sh, no, user, type + 'を更新');   // 権限チェック（自分の担当顧客か）
-    const before = personMarkDay_(no, type);
-    deleteJissekiRows_(function (r) { return Number(r.顧客NO) === Number(no) && r.種別 === type; });
-    if (checked) addJisseki_(no, user, type, 1, day);
-    SpreadsheetApp.flush();
-    const after = checked ? day : '';
-    if (before !== after) {
-      const label = 'NO:' + no + ' ' + type + (checked ? '（' + mdShort_(day) + '）に設定' : 'を解除');
-      recordUndo_(user, label, { kind: 'named', no: Number(no), type: type, before: before, after: after });
-    }
-    return { ok: true };
-  } finally {
-    lock.releaseLock();
-  }
+/** 採用／不採用 を付ける・外す。type: '採用'／'不採用'／''（未定に戻す） */
+function setHireResult(token, no, type, dateStr) {
+  return setResult_(token, no, 'hire', type, dateStr);
 }
 
 /** 見出し行から列名の位置(0始まり)を探す。前後や途中の空白（全角含む）は無視する。無ければ -1 */
